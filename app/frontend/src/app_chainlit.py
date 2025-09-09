@@ -19,7 +19,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@cl.password_auth_callback
+# @cl.password_auth_callback
 def auth_callback(username: str, password: str):
     """Simple password authentication - fixed version"""
     try:
@@ -80,10 +80,11 @@ class ChatSettings:
         self.planning = True
         self.ytb_search = True
         self.mcp_server = True
-        self.verbose = False
-        self.parallel = False
+        self.ai_search = True
+        self.verbose = True
+        self.parallel = True
         self.search_engine = list(SEARCH_ENGINES.values())[0]
-        self.language = "ko-KR"
+        self.language = "en-US"
         self.max_tokens = 4000
         self.temperature = 0.7
 
@@ -142,16 +143,16 @@ async def chat_profile():
     """Set up chat profiles for different languages"""
     return [
         cl.ChatProfile(
-            name="Korean",
-            markdown_description="## Plan Search Chat",
-            icon="/public/images/ai_foundry_icon_small.png",
-            starters=get_starters_for_language("ko-KR")
-        ),
-        cl.ChatProfile(
             name="English", 
             markdown_description="## Plan Search Chat",
             icon="/public/images/ai_foundry_icon_small.png",
             starters=get_starters_for_language("en-US")
+        ),
+        cl.ChatProfile(
+            name="Korean",
+            markdown_description="## Plan Search Chat",
+            icon="/public/images/ai_foundry_icon_small.png",
+            starters=get_starters_for_language("ko-KR")
         ),
     ]
 
@@ -170,7 +171,7 @@ async def start():
             await cl.Message(content="🔧 **Admin Access Granted**\nYou have administrator privileges.").send()
     
     # Get current chat profile
-    profile = cl.user_session.get("chat_profile", "Korean")
+    profile = cl.user_session.get("chat_profile", "English")
     language = "ko-KR" if profile == "Korean" else "en-US"
     
     # Initialize chat settings
@@ -214,15 +215,21 @@ async def start():
             tooltip=ui_text["mcp_desc"]
         ),
         cl.input_widget.Switch(
+            id="ai_search",
+            label=ui_text["ai_search_title"],
+            initial=True,
+            tooltip=ui_text["ai_search_desc"]
+        ),
+        cl.input_widget.Switch(
             id="verbose",
             label=ui_text["verbose_title"],
-            initial=False,
+            initial=True,
             tooltip=ui_text["verbose_desc"]
         ),
         cl.input_widget.Switch(
             id="parallel",
             label=ui_text["parallel_title"],
-            initial=False,
+            initial=True,
             tooltip=ui_text["parallel_desc"]
         ),
         cl.input_widget.Select(
@@ -274,9 +281,9 @@ async def setup_agent(settings_dict: Dict[str, Any]):
     settings.planning = settings_dict.get("planning", True)
     settings.web_search = settings_dict.get("web_search", True)
     settings.ytb_search = settings_dict.get("ytb_search", True)
-    settings.mcp_server = settings_dict.get("mcp_server", False)
-    settings.verbose = settings_dict.get("verbose", False)
-    settings.parallel = settings_dict.get("parallel", False)
+    settings.mcp_server = settings_dict.get("mcp_server", True)
+    settings.verbose = settings_dict.get("verbose", True)
+    settings.parallel = settings_dict.get("parallel", True)
     settings.max_tokens = settings_dict.get("max_tokens", 4000)
     settings.temperature = settings_dict.get("temperature", 0.7)
     
@@ -288,7 +295,7 @@ async def setup_agent(settings_dict: Dict[str, Any]):
     show_starters = settings_dict.get("show_starters", False)
     if show_starters:
         # Re-send starters
-        current_profile = cl.user_session.get("chat_profile", "Korean")
+        current_profile = cl.user_session.get("chat_profile", "English")
         language = "ko-KR" if current_profile == "Korean" else "en-US"
         starters = get_starters_for_language(language)
         
@@ -377,13 +384,19 @@ def decode_step_content(content: str) -> tuple[str, str, str]:
     
     return step_name, code_content, description
 
-async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
+async def stream_chat_with_api(message: str, settings: ChatSettings, files: List[Dict] = None) -> None:
     """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
     if not message or message.strip() == "":
         return
     
     # Get conversation history
     message_history = cl.chat_context.to_openai()
+    
+    # Add files to the last message if provided
+    if files and message_history:
+        # Add files to the most recent user message
+        if message_history[-1]["role"] == "user":
+            message_history[-1]["files"] = files
     
     # Prepare the API payload
     payload = {
@@ -395,6 +408,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         "include_web_search": settings.web_search,
         "include_ytb_search": settings.ytb_search,
         "include_mcp_server": settings.mcp_server,
+        "include_file_context": bool(files),  # Enable file context if files are present
         "search_engine": settings.search_engine,
         "stream": True,
         "locale": settings.language,
@@ -658,8 +672,32 @@ async def main(message: cl.Message):
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
     
+    # Process uploaded files if any
+    processed_files = []
+    if message.elements:
+        for element in message.elements:
+            if isinstance(element, cl.File):
+                # Read file content and encode as base64
+                try:
+                    file_content = element.content or element.path.read_bytes()
+                    file_data = {
+                        "name": element.name,
+                        "content": base64.b64encode(file_content).decode('utf-8'),
+                        "mime_type": element.mime or "application/octet-stream"
+                    }
+                    processed_files.append(file_data)
+                    logger.info(f"Processed file: {element.name}")
+                except Exception as e:
+                    logger.error(f"Error processing file {element.name}: {e}")
+                    await cl.Message(content=f"❌ Error processing file {element.name}: {str(e)}").send()
+    
+    # Add files to message if any were processed
+    if processed_files:
+        message.files = processed_files
+        await cl.Message(content=f"📁 Uploaded {len(processed_files)} file(s). Processing...").send()
+    
     # Process the message with streaming
-    await stream_chat_with_api(message.content, settings)
+    await stream_chat_with_api(message.content, settings, processed_files if processed_files else None)
 
 @cl.action_callback("clear_chat")
 async def on_action(action: cl.Action):
