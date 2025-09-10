@@ -41,11 +41,9 @@ if [ -f .env ]; then
 else
     echo "⚠️  .env file not found. Using default values."
     export API_URL="http://localhost:8000/plan_search"
-    export API_URL_PARALLEL="http://localhost:8000/plan_search_parallel"
 fi
 
 echo "API_URL: $API_URL"
-echo "API_URL_PARALLEL: $API_URL_PARALLEL"
 
 # Test connection to backend
 echo ""

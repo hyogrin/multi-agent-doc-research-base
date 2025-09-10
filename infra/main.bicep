@@ -201,10 +201,6 @@ resource frontendApp 'Microsoft.App/containerApps@2025-02-02-preview' = {
               value: 'https://${backendApp.properties.configuration.ingress.fqdn}/plan_search'
             }
             {
-              name: 'SK_API_URL_PARALLEL'
-              value: 'https://${backendApp.properties.configuration.ingress.fqdn}/plan_search_parallel'
-            }
-            {
               name: 'API_URL'
               value: 'https://${backendApp.properties.configuration.ingress.fqdn}/chat'
             }

@@ -38,7 +38,10 @@ template: |
     - "요즘 기분 어때?"  
     - "나는 유튜브가 좋아"
 
-  4. "tool_calling":  
+  4. "generate_report":  
+    The user is requesting the generation of a report based on the provided information or data.
+
+  5. "tool_calling":  
     The user is explicitly or implicitly **requesting a specific tool or function to be executed** (e.g., search, summarization, video lookup, etc.).  
     For example:  
     - "Summarize this YouTube video"  
@@ -47,11 +50,12 @@ template: |
 
   **IMPORTANT**: You must respond with ONLY a valid JSON object. Do not include any other text, explanations, or markdown formatting.
 
-  Write `enriched_query`, `keywords`, and `target_info` in {locale} language. Leave `tool_name` empty unless `user_intent` is `"tool_calling"`.
+  Write `enriched_query`, `search_query`, `keywords`, and `target_info` in {locale} language. Leave `tool_name` empty unless `user_intent` is `"tool_calling"`.
 
   {{
       "user_intent": "<classified intent>",
       "enriched_query": "<rewritten and optimized query>",
+      "search_query": "<rewritten query specifically for search>",
       "confidence": "<confidence score between 0.0 and 1.0>",
       "keywords": ["keyword1", "keyword2"],
       "target_info": "<type of information the user is looking for>",

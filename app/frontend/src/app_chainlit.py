@@ -58,7 +58,6 @@ def auth_callback(username: str, password: str):
 
 # Load environment variables
 SK_API_URL = os.getenv("SK_API_URL", "http://localhost:8000/plan_search")
-SK_API_URL_PARALLEL = os.getenv("SK_API_URL_PARALLEL", "http://localhost:8000/plan_search_parallel")
 
 # Define the search engines
 SEARCH_ENGINES = {
@@ -76,15 +75,14 @@ class ChatSettings:
     """Chat settings for managing user preferences"""
     def __init__(self):
         self.query_rewrite = True
-        self.web_search = True
-        self.planning = True
-        self.ytb_search = True
-        self.mcp_server = True
+        self.web_search = False
+        self.planning = False
+        self.ytb_search = False
+        self.mcp_server = False
         self.ai_search = True
         self.verbose = True
-        self.parallel = True
         self.search_engine = list(SEARCH_ENGINES.values())[0]
-        self.language = "en-US"
+        self.language = "ko-KR"
         self.max_tokens = 4000
         self.temperature = 0.7
 
@@ -143,17 +141,18 @@ async def chat_profile():
     """Set up chat profiles for different languages"""
     return [
         cl.ChatProfile(
-            name="English", 
-            markdown_description="## Plan Search Chat",
-            icon="/public/images/ai_foundry_icon_small.png",
-            starters=get_starters_for_language("en-US")
-        ),
-        cl.ChatProfile(
             name="Korean",
             markdown_description="## Plan Search Chat",
             icon="/public/images/ai_foundry_icon_small.png",
             starters=get_starters_for_language("ko-KR")
         ),
+        cl.ChatProfile(
+            name="English", 
+            markdown_description="## Plan Search Chat",
+            icon="/public/images/ai_foundry_icon_small.png",
+            starters=get_starters_for_language("en-US")
+        ),
+        
     ]
 
 @cl.on_chat_start
@@ -171,7 +170,7 @@ async def start():
             await cl.Message(content="🔧 **Admin Access Granted**\nYou have administrator privileges.").send()
     
     # Get current chat profile
-    profile = cl.user_session.get("chat_profile", "English")
+    profile = cl.user_session.get("chat_profile", "Korean")
     language = "ko-KR" if profile == "Korean" else "en-US"
     
     # Initialize chat settings
@@ -193,25 +192,25 @@ async def start():
         cl.input_widget.Switch(
             id="web_search",
             label=ui_text["web_search_title"],
-            initial=True,
+            initial=False,
             tooltip=ui_text["web_search_desc"]
         ),
         cl.input_widget.Switch(
             id="planning",
             label=ui_text["planning_title"],
-            initial=True,
+            initial=False,
             tooltip=ui_text["planning_desc"]
         ),
         cl.input_widget.Switch(
             id="ytb_search",
             label=ui_text["ytb_search_title"],
-            initial=True,
+            initial=False,
             tooltip=ui_text["ytb_search_desc"]
         ),
         cl.input_widget.Switch(
             id="mcp",
             label=ui_text["mcp_title"],
-            initial=True,
+            initial=False,
             tooltip=ui_text["mcp_desc"]
         ),
         cl.input_widget.Switch(
@@ -225,12 +224,6 @@ async def start():
             label=ui_text["verbose_title"],
             initial=True,
             tooltip=ui_text["verbose_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="parallel",
-            label=ui_text["parallel_title"],
-            initial=True,
-            tooltip=ui_text["parallel_desc"]
         ),
         cl.input_widget.Select(
             id="search_engine",
@@ -278,12 +271,12 @@ async def setup_agent(settings_dict: Dict[str, Any]):
     
     # Update settings based on user input
     settings.query_rewrite = settings_dict.get("query_rewrite", True)
-    settings.planning = settings_dict.get("planning", True)
-    settings.web_search = settings_dict.get("web_search", True)
-    settings.ytb_search = settings_dict.get("ytb_search", True)
-    settings.mcp_server = settings_dict.get("mcp_server", True)
+    settings.planning = settings_dict.get("planning", False)
+    settings.web_search = settings_dict.get("web_search", False)
+    settings.ytb_search = settings_dict.get("ytb_search", False)
+    settings.mcp_server = settings_dict.get("mcp_server", False)
+    settings.ai_search = settings_dict.get("ai_search", True)
     settings.verbose = settings_dict.get("verbose", True)
-    settings.parallel = settings_dict.get("parallel", True)
     settings.max_tokens = settings_dict.get("max_tokens", 4000)
     settings.temperature = settings_dict.get("temperature", 0.7)
     
@@ -398,6 +391,15 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
         if message_history[-1]["role"] == "user":
             message_history[-1]["files"] = files
     
+    # Helper function to clean text content
+    def clean_response_text(text: str) -> str:
+        """Clean response text to prevent unwanted markdown formatting"""
+        # Replace ~~ with == to avoid strikethrough
+        cleaned_text = text.replace("~~", "==")
+        # You can add more replacements here if needed
+        # cleaned_text = cleaned_text.replace("**", "*")  # Convert bold to italic if needed
+        return cleaned_text
+    
     # Prepare the API payload
     payload = {
         "messages": message_history[-10:],
@@ -408,6 +410,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
         "include_web_search": settings.web_search,
         "include_ytb_search": settings.ytb_search,
         "include_mcp_server": settings.mcp_server,
+        "include_ai_search": settings.ai_search,
         "include_file_context": bool(files),  # Enable file context if files are present
         "search_engine": settings.search_engine,
         "stream": True,
@@ -417,7 +420,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
     
     # Debug logging
     logger.info(f"API Payload: query_rewrite={settings.query_rewrite}, web_search={settings.web_search}, planning={settings.planning},"
-          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, search_engine={settings.search_engine}, "
+          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, search_engine={settings.search_engine}, "
           f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
           f"language={settings.language}, verbose={settings.verbose}")
     
@@ -433,8 +436,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         
-        # Choose API endpoint based on parallel setting
-        api_url = SK_API_URL_PARALLEL if settings.parallel else SK_API_URL
+        api_url = SK_API_URL
         
         # Create step for API call with detailed information
         async with cl.Step(name="API Request", type="run") as step:
@@ -445,8 +447,8 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
                 "web_search": settings.web_search,
                 "ytb_search": settings.ytb_search,
                 "mcp_server": settings.mcp_server,
+                "ai_search": settings.ai_search,
                 "search_engine": settings.search_engine,
-                "parallel": settings.parallel,
                 "verbose": settings.verbose,
                 "locale": settings.language,
             }
@@ -571,18 +573,20 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
                                     # Store step for later reference
                                     tool_steps[step_name] = current_tool_step
                             else:
-                                # Regular content - accumulate and stream
+                                # Regular content - clean and accumulate and stream
+                                cleaned_line = clean_response_text(line)  # Clean the line before processing
+                                
                                 if accumulated_content:
                                     # Apply formatting rules for line breaks
-                                    if line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
-                                        accumulated_content += "\n\n" + line
+                                    if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
+                                        accumulated_content += "\n\n" + cleaned_line
                                     else:
-                                        accumulated_content += "\n" + line
+                                        accumulated_content += "\n" + cleaned_line
                                 else:
-                                    accumulated_content = line
+                                    accumulated_content = cleaned_line
                                 
-                                # Stream update to UI safely
-                                if not await safe_stream_token(msg, line + "\n"):
+                                # Stream update to UI safely with cleaned content
+                                if not await safe_stream_token(msg, cleaned_line + "\n"):
                                     logger.warning("Stream connection lost, stopping streaming")
                                     break  # Exit if connection is lost
                         
@@ -605,19 +609,21 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
                             
                             if chunks:
                                 response_text = b''.join(chunks).decode('utf-8', errors='replace')
+                                cleaned_response = clean_response_text(response_text)  # Clean the response
                                 
                                 # Try to parse as JSON first
                                 try:
                                     response_data = json.loads(response_text)
                                     if isinstance(response_data, dict) and "content" in response_data:
-                                        await safe_stream_token(msg, response_data["content"])
-                                        process_step.output = f"✅ Parsed JSON response with content: {response_data['content'][:50]}..."
+                                        cleaned_content = clean_response_text(response_data["content"])
+                                        await safe_stream_token(msg, cleaned_content)
+                                        process_step.output = f"✅ Parsed JSON response with content: {cleaned_content[:50]}..."
                                     else:
-                                        await safe_stream_token(msg, response_text)
+                                        await safe_stream_token(msg, cleaned_response)
                                         process_step.output = "✅ JSON response without content field, using raw text"
                                 except json.JSONDecodeError:
                                     # Not valid JSON, just use as text
-                                    await safe_stream_token(msg, response_text)
+                                    await safe_stream_token(msg, cleaned_response)
                                     process_step.output = "✅ Not a valid JSON response, using raw text"
                             else:
                                 error_msg = "No response received from server."

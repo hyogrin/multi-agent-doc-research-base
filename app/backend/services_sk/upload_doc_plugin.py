@@ -33,15 +33,15 @@ class UploadDocPlugin:
         
         # AI Search setup
         self.search_endpoint = os.getenv("AZURE_AI_SEARCH_ENDPOINT")
-        self.search_key = os.getenv("AZURE_AI_SEARCH_API_KEY", required=False)
-        self.index_name = os.getenv("AZURE_SEARCH_INDEX_NAME", required=False) or "document_inquiry_index"
+        self.search_key = os.getenv("AZURE_AI_SEARCH_API_KEY")
+        self.index_name = os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
         
         # OpenAI setup for embeddings
         self.openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.openai_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", required=False) or "text-embedding-3-small"
-        self.openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", required=False) or "2024-12-01-preview"
-        
+        self.embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+        self.openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+
         # Initialize clients
         self._init_clients()
     

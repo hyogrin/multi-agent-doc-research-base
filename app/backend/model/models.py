@@ -93,11 +93,11 @@ class PlanSearchRequest(BaseModel):
         description="Include MCP server integration"
     )
     include_ai_search: bool = Field(
-        False,
+        True,
         description="Include AI search results from uploaded documents"
     )
     verbose: bool = Field(
-        False,
+        True,
         description="Verbose mode for detailed output"
     )
     

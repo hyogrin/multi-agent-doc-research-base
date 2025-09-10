@@ -186,88 +186,85 @@ class PlanSearchExecutorSK:
             search_queries = []
             resource_group_name = None
             
-            if query_rewrite:
-                try:
-                    # Use IntentPlugin for intent analysis
-                    intent_function = self.kernel.get_function("intent_plan", "analyze_intent")
-                    intent_result = await intent_function.invoke(
+            
+            try:
+                # Use IntentPlugin for intent analysis
+                intent_function = self.kernel.get_function("intent_plan", "analyze_intent")
+                intent_result = await intent_function.invoke(
+                    self.kernel,
+                    KernelArguments(
+                        original_query=last_user_message,
+                        locale=locale,
+                        temperature=0.3
+                    )
+                )
+                
+                if intent_result and intent_result.value:
+                    intent_data = json.loads(intent_result.value)
+                    user_intent = intent_data.get("user_intent", "general_query")
+                    enriched_query = intent_data.get("enriched_query", last_user_message)
+                    search_queries = [intent_data.get("search_query", last_user_message)]
+                    resource_group_name = intent_data.get("resource_group_name")
+                    
+                    logger.info("=" * 60)
+                    logger.info("Intent analysis result:")
+                    logger.info(f"User intent: {user_intent}")
+                    logger.info(f"Enriched query: {enriched_query}")
+                    logger.info(f"Search queries: {search_queries}")
+                    logger.info(f"resource group name: {resource_group_name}")
+                    logger.info("=" * 60)
+                    
+                if verbose and stream:
+                    intent_data_str = json.dumps(intent_data, ensure_ascii=False, indent=2) if intent_data else "{}"
+                    yield f"data: {self.send_step_with_code(LOCALE_MSG['analyze_complete'], intent_data_str)}\n\n"
+
+                if user_intent == "small_talk":
+                    # Small talk does not require search
+                    planning = False
+                    include_web_search = False
+                    include_ytb_search = False
+
+                    if stream:
+                        yield f"data: ### {LOCALE_MSG['intent_small_talk']}\n\n"
+                    
+                if planning:
+                
+                    if stream:
+                        yield f"data: ### {LOCALE_MSG['search_planning']}\n\n"
+
+                    # Generate search plan using IntentPlanPlugin
+                    plan_function = self.kernel.get_function("intent_plan", "generate_search_plan")
+                    plan_result = await plan_function.invoke(
                         self.kernel,
                         KernelArguments(
-                            original_query=last_user_message,
+                            user_intent=user_intent,
+                            enriched_query=enriched_query,
                             locale=locale,
-                            temperature=0.3
+                            temperature=0.7,
                         )
                     )
                     
-                    if intent_result and intent_result.value:
-                        intent_data = json.loads(intent_result.value)
-                        user_intent = intent_data.get("user_intent", "general_query")
-                        enriched_query = intent_data.get("enriched_query", last_user_message)
-                        resource_group_name = intent_data.get("resource_group_name")
-                        
-                        logger.info("=" * 60)
-                        logger.info("Intent analysis result:")
-                        logger.info(f"User intent: {user_intent}")
-                        logger.info(f"Enriched query: {enriched_query}")
-                        logger.info(f"resource group name: {resource_group_name}")
-                        logger.info("=" * 60)
-                        
-                    if verbose and stream:
-                        intent_data_str = json.dumps(intent_data, ensure_ascii=False, indent=2) if intent_data else "{}"
-                        yield f"data: {self.send_step_with_code(LOCALE_MSG['analyze_complete'], intent_data_str)}\n\n"
+                    if plan_result and plan_result.value:
+                        plan_data = json.loads(plan_result.value)
+                        search_queries = plan_data.get("search_queries", [enriched_query])
 
-                    if user_intent == "small_talk":
-                        # Small talk does not require search
-                        planning = False
-                        include_web_search = False
-                        include_ytb_search = False
-
-                        if stream:
-                            yield f"data: ### {LOCALE_MSG['intent_small_talk']}\n\n"
-                        
-                    if planning:
-                    
-                        if stream:
-                            yield f"data: ### {LOCALE_MSG['search_planning']}\n\n"
-
-                        # Generate search plan using IntentPlanPlugin
-                        plan_function = self.kernel.get_function("intent_plan", "generate_search_plan")
-                        plan_result = await plan_function.invoke(
-                            self.kernel,
-                            KernelArguments(
-                                user_intent=user_intent,
-                                enriched_query=enriched_query,
-                                locale=locale,
-                                temperature=0.7,
-                            )
-                        )
-                        
-                        if plan_result and plan_result.value:
-                            plan_data = json.loads(plan_result.value)
-                            search_queries = plan_data.get("search_queries", [enriched_query])
-
-                            logger.info(f"Search plan: {plan_data}")
-                        else:
-                            # Fallback
-                            search_queries = [enriched_query]
-                            
-                        if verbose and stream:
-                            plan_data_str = json.dumps(plan_data, ensure_ascii=False, indent=2) if plan_data else "{}"
-                            yield f"data: {self.send_step_with_code(LOCALE_MSG['plan_done'], plan_data_str)}\n\n"
-
+                        logger.info(f"Search plan: {plan_data}")
                     else:
                         # Fallback
                         search_queries = [enriched_query]
                         
-                except Exception as e:
-                    logger.error(f"Error during intent analysis: {e}")
-                    # Fallback to original query
-                    search_queries = [enriched_query]
-                    if stream:
-                        yield f"data: ### Intent analysis failed, using fallback\n\n"
-            else:
-                # No query rewriting
+                    if verbose and stream:
+                        plan_data_str = json.dumps(plan_data, ensure_ascii=False, indent=2) if plan_data else "{}"
+                        yield f"data: {self.send_step_with_code(LOCALE_MSG['plan_done'], plan_data_str)}\n\n"
+
+                    
+            except Exception as e:
+                logger.error(f"Error during intent analysis: {e}")
+                # Fallback to original query
                 search_queries = [enriched_query]
+                if stream:
+                    yield f"data: ### Intent analysis failed, using fallback\n\n"
+            
                 
             # Collect contexts
             all_contexts = []
@@ -405,34 +402,107 @@ class PlanSearchExecutorSK:
             if include_ai_search:  
                 try:
                     doc_contexts = []
-                    # Get uploaded files from the last user message
-                    last_message = messages[-1] if messages else None
-                    if last_message and hasattr(last_message, 'files') and last_message.files:
+                    combined_doc_context = ""  # 초기화 추가
+                    seen_documents = set()  # 중복 문서 방지용
+                    MAX_CONTEXT_LENGTH = 100000  # 10만자로 제한
+                    MAX_DOCUMENT_LENGTH = 50000   # 문서당 50000자로 제한
+                    current_total_length = 0  # 현재 누적 길이 추적
+                    
+                    # Process each search query individually
+                    for i, query in enumerate(search_queries):
                         if stream:
-                            yield f"data: ### {LOCALE_MSG.get('ai_search_context', 'Processing ai search results')}...\n\n"
-
-                        # Process uploaded files using ai_search plugin
-                        ai_search_function = self.kernel.get_function("ai_search", "process_doc_search")
+                            yield f"data: ### {LOCALE_MSG['ai_search_context']} ({i+1}/{len(search_queries)}): {query}\n\n"
+                        
+                        # Get docs using ai_search plugin
+                        ai_search_function = self.kernel.get_function("ai_search", "search_documents")
                         ai_search_result = await ai_search_function.invoke(
                             self.kernel,
-                            files=last_message.files
+                            KernelArguments(
+                                query=query,
+                                search_type="semantic",
+                                top_k=2,  # 쿼리당 1개로 제한
+                                include_content=True
+                            )
                         )
-
+                        
                         if ai_search_result and ai_search_result.value:
-                            doc_contexts.append(ai_search_result.value)
-                            logger.info("Added document context from uploaded files")
-                            if stream:
-                                yield f"data: ### {LOCALE_MSG.get('ai_search_context_processed', 'File content processed successfully')}\n\n"
+                            
+                            search_data = json.loads(ai_search_result.value) if isinstance(ai_search_result.value, str) else ai_search_result.value
+                            
+                            if search_data.get('status') == 'success' and search_data.get('documents'):
+                                documents = search_data['documents']
+                                logger.info(f"Search result doc length: {len(documents)}")
+                                logger.info(f"Search result value preview: {str(documents)[:100]}")
 
-                    # Add document contexts to the overall contexts
+                                for doc_idx, doc in enumerate(documents[:2], 1):  # 각 쿼리에서 2개 문서만
+                                    # 문서 ID나 제목으로 중복 확인
+                                    doc_id = doc.get('id') or doc.get('title') or doc.get('url', f"doc_{i}_{doc_idx}")
+                                    
+                                    if doc_id in seen_documents:
+                                        logger.info(f"Skipping duplicate document: {doc_id}")
+                                        continue
+                                    
+                                    seen_documents.add(doc_id)
+                                    
+                                    # 문서 내용 처리
+                                    content_to_add = None
+                                    
+                                    if 'content' in doc and doc['content']:
+                                        original_content = doc['content']
+                                        logger.info(f"Document {doc_idx} has {len(original_content)} chars for query '{query}'")
+                                        
+                                        # 길이에 따른 처리 TODO : 더 나은 요약 방법 고려
+                                        if len(original_content) > MAX_DOCUMENT_LENGTH:
+                                            content_to_add = original_content[:MAX_DOCUMENT_LENGTH] + "... [truncated]"
+                                            logger.info(f"Truncated long document to {len(content_to_add)} chars")
+                                        else:
+                                            content_to_add = original_content
+                                            
+                                    elif 'content_preview' in doc and doc['content_preview']:
+                                        content_preview = doc['content_preview'][:MAX_DOCUMENT_LENGTH]
+                                        content_to_add = content_preview
+                                        logger.info(f"Using content_preview: {len(content_to_add)} chars")
+                                    elif 'summary' in doc and doc['summary']:
+                                        content_to_add = doc['summary'][:MAX_DOCUMENT_LENGTH]
+                                        logger.info(f"Using summary: {len(content_to_add)} chars")
+                                    else:
+                                        logger.warning(f"Document {doc_idx} has no usable content for query '{query}'")
+                                        continue
+                                    
+                                    # 전체 길이 체크
+                                    if content_to_add and current_total_length + len(content_to_add) <= MAX_CONTEXT_LENGTH:
+                                        doc_contexts.append(content_to_add)
+                                        current_total_length += len(content_to_add)
+                                        logger.info(f"Added document content: {len(content_to_add)} chars, total: {current_total_length}")
+                                    else:
+                                        logger.warning(f"Skipping document due to length limit. Would exceed {MAX_CONTEXT_LENGTH} chars")
+                                        break  
+                            else:
+                                logger.warning(f"AI search returned status: {search_data.get('status', 'unknown')}")
+                                    
+                            
+                        else:
+                            logger.warning("No AI search result returned")
+
+                        # 전체 길이 제한 체크 - 외부 루프도 중단
+                        if current_total_length >= MAX_CONTEXT_LENGTH:
+                            logger.warning(f"Reached maximum context length: {current_total_length}, stopping search")
+                            break
+
+                    logger.info(f"Total document contexts collected: {len(doc_contexts)}")
+                    logger.info(f"Unique documents processed: {len(seen_documents)}")
+                    logger.info(f"Total context length: {current_total_length} characters")
+                    
                     if doc_contexts:
                         combined_doc_context = "\n\n".join(doc_contexts)
+                        logger.info(f"Final combined document context length: {len(combined_doc_context)} characters")
                         all_contexts.append(f"=== Document Context ===\n{combined_doc_context}")
 
-                    if verbose and stream:
-                        yield f"data: {self.send_step_with_code(LOCALE_MSG['ai_search_context_done'], combined_doc_context)}\n\n"
-
-                    
+                    if verbose and stream and combined_doc_context:
+                        # Display용으로는 200자로 제한
+                        truncated_for_display = combined_doc_context[:200] + "... [truncated for display]" if len(combined_doc_context) > 200 else combined_doc_context
+                        yield f"data: {self.send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated_for_display)}\n\n"
+                
                 except Exception as e:
                     logger.error(f"Error during document context processing: {str(e)}")
                     if stream:
@@ -538,5 +608,4 @@ class PlanSearchExecutorSK:
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-            
-    
+

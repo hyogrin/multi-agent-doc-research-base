@@ -8,7 +8,6 @@ from model.models import ChatRequest, ChatResponse, PlanSearchRequest
 from services.orchestrator import Orchestrator
 from services.plan_executor import PlanExecutor
 from services_sk.plan_search_executor_sk import PlanSearchExecutorSK
-from services_sk.plan_search_executor_sk_parallel import PlanSearchExecutorSKParallel
 from services.search_crawler import GoogleSearchCrawler, BingSearchCrawler
 from services.bing_grounding_search import BingGroundingSearch, BingGroundingCrawler
 
@@ -110,64 +109,7 @@ async def plan_search_endpoint(
             detail=f"Failed to generate risk analysis response: {str(e)}"
         )
     
-@app.post("/plan_search_parallel", response_model=ChatResponse)
-async def plan_search_parallel_endpoint(
-    request: PlanSearchRequest, 
-):
-    plan_search_executor = None
-    try:
-        plan_search_executor = PlanSearchExecutorSKParallel(settings)
-        
-        if request.stream:
-            return StreamingResponse(
-                plan_search_executor.generate_response(
-                    request.messages,
-                    request.max_tokens,
-                    request.temperature,
-                    request.query_rewrite,
-                    request.planning,
-                    request.search_engine,  
-                    stream=True,
-                    elapsed_time=True,
-                    locale=request.locale,
-                    include_web_search=request.include_web_search,
-                     include_ytb_search=request.include_ytb_search,
-                    include_mcp_server=request.include_mcp_server,
-                    include_ai_search=request.include_ai_search,
-                    verbose=request.verbose,
-                ),
-                media_type="text/event-stream"
-            )
-        
-        response_generator = plan_search_executor.generate_response(
-            request.messages,
-            request.max_tokens,
-            request.temperature,
-            request.query_rewrite,
-            request.planning,
-            request.search_engine,
-            stream=False,
-            elapsed_time=True,
-            locale=request.locale,
-            include_web_search=request.include_web_search,
-            include_ytb_search=request.include_ytb_search,
-            include_mcp_server=request.include_mcp_server,
-            include_ai_search=request.include_ai_search,
-            verbose=request.verbose,
-        )
-        
-        response = await response_generator.__anext__()
-        
-        return ChatResponse(
-            message=response,
-            success=True
-        )
-    except Exception as e:
-        logger.error(f"Error processing risk search request: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate risk analysis response: {str(e)}"
-        )
+
 
 @app.post("/deep_search", response_model=ChatResponse)
 async def deep_search_endpoint(

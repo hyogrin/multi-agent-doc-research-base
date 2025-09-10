@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # Application Settings
     LOG_LEVEL: str = "INFO"
-    MAX_TOKENS: int = 2000
+    MAX_TOKENS: int = 10000
     DEFAULT_TEMPERATURE: float = 0.7
     TIME_ZONE: str = "Asia/Seoul"
 

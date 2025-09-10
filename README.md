@@ -9,11 +9,6 @@ I am excited to introduce several enhancements that significantly improve the fu
 - Enables more intelligent planning and contextual understanding, resulting in richer, more accurate responses.
 - Supports planner-based execution and native function calling for complex multi-step tasks.
 
-### ⚡️ Parallel Agentic Flow
-- Added support for **parallel processing** within agentic flows.
-- Improves performance and responsiveness during multi-function execution.
-- Ideal for scenarios requiring simultaneous API calls or concurrent reasoning steps.
-
 ### 📺 YouTube MCP Server Integration
 - Supports both **MCP server** and **native API**-based function calling for YouTube data access.
 - Enables seamless retrieval of YouTube content via pre-configured MCP endpoints or direct API calls.
@@ -43,7 +38,7 @@ Here are several powerful features included in this project that enhance search-
 
 ### 🧭 Plan & Execute
 - Implements planning techniques to **enrich search keywords** based on the original query context.  
-- Automatically decomposes **complex questions into sub-queries**, searches them in parallel, and returns synthesized context to the chatbot.  
+- Automatically decomposes **complex questions into sub-queries**, searches them, and returns synthesized context to the chatbot.  
 - Boosts performance in multi-intent or multi-hop question scenarios.
 
 ### 📊 Batch Evaluation
