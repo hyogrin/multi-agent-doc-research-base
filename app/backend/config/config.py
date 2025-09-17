@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_API_VERSION: str = "2023-05-15"
     AZURE_OPENAI_DEPLOYMENT_NAME: str
     AZURE_OPENAI_QUERY_DEPLOYMENT_NAME: Optional[str] = None
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: str
     PLANNER_MAX_PLANS: int = 3  # Maximum number of plans to generate
 
     # Redis Settings
@@ -40,7 +41,12 @@ class Settings(BaseSettings):
     MAX_TOKENS: int = 10000
     DEFAULT_TEMPERATURE: float = 0.7
     TIME_ZONE: str = "Asia/Seoul"
-
+    
+    # AI Search Settings
+    AZURE_AI_SEARCH_ENDPOINT: str = None
+    AZURE_AI_SEARCH_API_KEY: str = None
+    AZURE_AI_SEARCH_INDEX_NAME: str = None
+    
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=True,

@@ -25,6 +25,7 @@ from .corp_plugin import CORPPlugin
 from .intent_plan_plugin import IntentPlanPlugin
 from .grounding_plugin import GroundingPlugin
 from .ai_search_plugin import AISearchPlugin
+from .unified_file_upload_plugin import UnifiedFileUploadPlugin
 logger = logging.getLogger(__name__)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -83,6 +84,7 @@ class PlanSearchExecutorSK:
         self.intent_plan_plugin = IntentPlanPlugin(settings)
         self.grounding_plugin = GroundingPlugin()
         self.ai_search_plugin = AISearchPlugin()
+        self.unified_file_upload_plugin = UnifiedFileUploadPlugin()
         
         # Add plugins to kernel
         self.kernel.add_plugin(self.search_plugin, plugin_name="search")
@@ -92,6 +94,7 @@ class PlanSearchExecutorSK:
         self.kernel.add_plugin(self.corp_plugin, plugin_name="corp") # not use anymore
         self.kernel.add_plugin(self.intent_plan_plugin, plugin_name="intent_plan")
         self.kernel.add_plugin(self.ai_search_plugin, plugin_name="ai_search")
+        self.kernel.add_plugin(self.unified_file_upload_plugin, plugin_name="file_upload")
         
         self.deployment_name = settings.AZURE_OPENAI_DEPLOYMENT_NAME
         self.query_deployment_name = settings.AZURE_OPENAI_QUERY_DEPLOYMENT_NAME

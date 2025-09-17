@@ -377,19 +377,13 @@ def decode_step_content(content: str) -> tuple[str, str, str]:
     
     return step_name, code_content, description
 
-async def stream_chat_with_api(message: str, settings: ChatSettings, files: List[Dict] = None) -> None:
+async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
     if not message or message.strip() == "":
         return
     
     # Get conversation history
     message_history = cl.chat_context.to_openai()
-    
-    # Add files to the last message if provided
-    if files and message_history:
-        # Add files to the most recent user message
-        if message_history[-1]["role"] == "user":
-            message_history[-1]["files"] = files
     
     # Helper function to clean text content
     def clean_response_text(text: str) -> str:
@@ -411,7 +405,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings, files: List
         "include_ytb_search": settings.ytb_search,
         "include_mcp_server": settings.mcp_server,
         "include_ai_search": settings.ai_search,
-        "include_file_context": bool(files),  # Enable file context if files are present
         "search_engine": settings.search_engine,
         "stream": True,
         "locale": settings.language,
@@ -678,32 +671,8 @@ async def main(message: cl.Message):
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
     
-    # Process uploaded files if any
-    processed_files = []
-    if message.elements:
-        for element in message.elements:
-            if isinstance(element, cl.File):
-                # Read file content and encode as base64
-                try:
-                    file_content = element.content or element.path.read_bytes()
-                    file_data = {
-                        "name": element.name,
-                        "content": base64.b64encode(file_content).decode('utf-8'),
-                        "mime_type": element.mime or "application/octet-stream"
-                    }
-                    processed_files.append(file_data)
-                    logger.info(f"Processed file: {element.name}")
-                except Exception as e:
-                    logger.error(f"Error processing file {element.name}: {e}")
-                    await cl.Message(content=f"❌ Error processing file {element.name}: {str(e)}").send()
-    
-    # Add files to message if any were processed
-    if processed_files:
-        message.files = processed_files
-        await cl.Message(content=f"📁 Uploaded {len(processed_files)} file(s). Processing...").send()
-    
     # Process the message with streaming
-    await stream_chat_with_api(message.content, settings, processed_files if processed_files else None)
+    await stream_chat_with_api(message.content, settings)
 
 @cl.action_callback("clear_chat")
 async def on_action(action: cl.Action):

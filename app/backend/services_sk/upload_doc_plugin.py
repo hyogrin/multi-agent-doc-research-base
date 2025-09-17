@@ -157,16 +157,15 @@ class UploadDocPlugin:
             page_count = len(result.pages) if result.pages else 0
             
             # TODO Consider page level chunking (can be extended by length/token if needed)
-                # chunks = []
-                # for p in result.paragraphs or []:
-                #     page = p.bounding_regions[0].page_number if p.bounding_regions else None
-                #     chunks.append({
-                #         "page": page,
-                #         "content": p.content,
-                #         "offset": p.spans[0].offset,
-                #         "length": p.spans[0].length
-                #     })
-                # #
+            chunks = []
+            for p in result.paragraphs or []:
+                page = p.bounding_regions[0].page_number if p.bounding_regions else None
+                chunks.append({
+                    "page": page,
+                    "content": p.content,
+                    "offset": p.spans[0].offset,
+                    "length": p.spans[0].length
+                })
             
             # Step 2: Generate embeddings and process content
             summary = self._create_summary(content)
