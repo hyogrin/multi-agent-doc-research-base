@@ -29,6 +29,7 @@ class FileUploadResponse(BaseModel):
     failed_uploads: int = Field(..., description="Number of failed uploads")
     results: List[Dict] = Field(..., description="Detailed results for each file")
     message: str = Field(..., description="Summary message")
+    upload_id: Optional[str] = Field(None, description="Unique upload identifier for status tracking")
 
 
 class ChatMessage(BaseModel):

@@ -9,8 +9,9 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from i18n.locale_msg_front import UI_TEXT, EXAMPLE_PROMPTS
 from pathlib import Path
+from io import BytesIO
 
-# 간단한 사용자 인증 설정
+# Configuration from environment variables
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "ms_user")
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "msuser123")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -58,6 +59,14 @@ def auth_callback(username: str, password: str):
 
 # Load environment variables
 SK_API_URL = os.getenv("SK_API_URL", "http://localhost:8000/plan_search")
+# Derive upload endpoint from SK_API_URL
+UPLOAD_API_URL = os.getenv("UPLOAD_API_URL", SK_API_URL.rsplit("/", 1)[0] + "/upload_documents")
+# Status check endpoint
+UPLOAD_STATUS_URL = os.getenv("UPLOAD_STATUS_URL", SK_API_URL.rsplit("/", 1)[0] + "/upload_status")
+
+# Global variable to track active uploads
+active_uploads = {}
+
 
 # Define the search engines
 SEARCH_ENGINES = {
@@ -130,11 +139,289 @@ def get_starters_for_language(language: str):
             )
             starters.append(starter)
             logger.info(f"Added starter: {category} - {starter.label}")
-        else:
-            logger.warning(f"Category {category} not found in EXAMPLE_PROMPTS[{language}]")
+
+async def check_upload_status(upload_id: str, status_message: cl.Message = None):
+    """Check upload status and update message"""
+    try:
+        session = requests.Session()
+        response = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=30)
+        
+        if response.ok:
+            status_data = response.json()
+            status = status_data.get("status", "unknown")
+            message = status_data.get("message", "")
+            progress = status_data.get("progress", 0)
+            
+            # Create progress message with emoji
+            if status == "processing":
+                progress_bar = "🟩" * (progress // 10) + "⬜" * (10 - progress // 10)
+                content = f"📤 **업로드 진행 상황**\n\n{message}\n\n진행률: {progress}%\n{progress_bar}"
+                
+                if status_message:
+                    status_message.content = content
+                    await status_message.update()
+                
+                # Continue checking if still processing
+                if progress < 100:
+                    await asyncio.sleep(2)  # Wait 2 seconds before next check
+                    return await check_upload_status(upload_id, status_message)
+                    
+            elif status == "completed":
+                file_results = status_data.get("file_results", [])
+                successful_count = len([r for r in file_results if r.get("status") == "success"])
+                
+                content = f"✅ **업로드 완료!**\n\n{message}\n\n성공한 파일: {successful_count}개\n\n💡 이제 업로드된 문서에 대해 질문해보세요!"
+                
+                if status_message:
+                    status_message.content = content
+                    await status_message.update()
+                    
+            elif status == "error":
+                content = f"❌ **업로드 실패**\n\n{message}\n\n다시 시도해보세요."
+                
+                if status_message:
+                    status_message.content = content
+                    await status_message.update()
+            
+            # Remove from active uploads when complete
+            if status in ["completed", "error"] and upload_id in active_uploads:
+                del active_uploads[upload_id]
+                
+            return status_data
+            
+    except Exception as e:
+        logger.error(f"Error checking upload status: {e}")
+        if status_message:
+            status_message.content = f"❌ **상태 확인 실패**: {str(e)}"
+            await status_message.update()
     
-    logger.info(f"Total starters created: {len(starters)}")
-    return starters
+    return None
+
+async def upload_files_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
+    """Upload attached files to backend with status tracking"""
+    try:
+        # Initial upload message
+        status_message = cl.Message(content="📤 **파일 업로드 중...**\n\n파일을 서버에 업로드하고 있습니다...")
+        await status_message.send()
+        
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(max_retries=3)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        files_payload = []
+        valid_files = []
+        
+        # File validation and size limits
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+        allowed_extensions = {'.pdf', '.docx', '.txt'}
+        
+        for att in attachments:
+            filename = getattr(att, "name", None) or getattr(att, "filename", None) or (att.get("name") if isinstance(att, dict) else None) or "file"
+            
+            # Check file extension
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                await cl.Message(content=f"❌ **지원하지 않는 파일 형식**: {filename}\n\n지원 형식: PDF, DOCX, TXT").send()
+                continue
+            
+            file_bytes = None
+            content_type = "application/octet-stream"
+
+            # Get file content
+            if hasattr(att, "content"):
+                file_bytes = att.content
+                content_type = getattr(att, "content_type", content_type)
+            elif isinstance(att, dict) and ("content" in att or "data" in att):
+                b64 = att.get("content") or att.get("data")
+                try:
+                    file_bytes = base64.b64decode(b64)
+                except Exception:
+                    file_bytes = b""
+                content_type = att.get("content_type", content_type)
+            elif hasattr(att, "url"):
+                url = getattr(att, "url")
+                try:
+                    r = session.get(url, timeout=30)
+                    r.raise_for_status()
+                    file_bytes = r.content
+                    content_type = r.headers.get("Content-Type", content_type)
+                except Exception as e:
+                    await cl.Message(content=f"❌ **파일 다운로드 실패**: {filename} - {e}").send()
+                    continue
+            else:
+                await cl.Message(content=f"❌ **지원하지 않는 첨부파일 형식**: {filename}").send()
+                continue
+
+            # Check file size
+            if len(file_bytes) > MAX_FILE_SIZE:
+                await cl.Message(content=f"❌ **파일 크기 초과**: {filename}\n\n최대 크기: 50MB").send()
+                continue
+
+            files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
+            valid_files.append(filename)
+
+        if not files_payload:
+            await cl.Message(content="❌ **업로드할 유효한 파일이 없습니다.**").send()
+            return
+
+        # Check file count limit
+        if len(files_payload) > 10:
+            await cl.Message(content="❌ **파일 개수 초과**: 최대 10개 파일만 업로드 가능합니다.").send()
+            return
+
+        # Update message with file list
+        status_message.content = f"📤 **파일 업로드 중...**\n\n업로드할 파일 ({len(valid_files)}개):\n" + "\n".join([f"• {f}" for f in valid_files])
+        await status_message.update()
+
+        # Prepare form data
+        data = {
+            "document_type": document_type,
+            "company": company or "",
+            "industry": industry or "",
+            "report_year": report_year or "",
+            "force_upload": str(force_upload).lower()
+        }
+
+        # Upload files
+        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
+        
+        if resp.ok:
+            try:
+                resp_json = resp.json()
+                upload_id = resp_json.get("upload_id")
+                
+                if upload_id:
+                    # Store upload info
+                    active_uploads[upload_id] = {
+                        "files": valid_files,
+                        "started_at": asyncio.get_event_loop().time()
+                    }
+                    
+                    # Start status checking
+                    status_message.content = f"📤 **업로드 시작됨**\n\n파일들이 백그라운드에서 처리되고 있습니다...\n\n업로드 ID: {upload_id[:8]}..."
+                    await status_message.update()
+                    
+                    # Check status continuously
+                    await check_upload_status(upload_id, status_message)
+                else:
+                    message = resp_json.get("message", "업로드 완료")
+                    status_message.content = f"✅ **업로드 응답**: {message}"
+                    await status_message.update()
+                    
+            except Exception as e:
+                status_message.content = f"✅ **업로드 완료**: {resp.text}"
+                await status_message.update()
+        else:
+            status_message.content = f"❌ **업로드 실패**: {resp.status_code} - {resp.text}"
+            await status_message.update()
+
+    except Exception as e:
+        await cl.Message(content=f"❌ **업로드 오류**: {e}").send()
+        logger.error(f"Upload error: {e}")
+
+async def upload_message_attachments_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
+    """Upload message attachments to backend (elements from messages)"""
+    try:
+        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
+        
+        # Allowed file extensions (same as backend validation)
+        allowed_extensions = {'.pdf', '.docx', '.txt'}
+        
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(max_retries=3)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        files_payload = []
+        invalid_files = []
+        
+        for att in attachments:
+            # Get filename from attachment
+            filename = getattr(att, "name", None) or getattr(att, "filename", None) or "uploaded_file"
+            
+            # Check file extension
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                invalid_files.append(f"{filename} ({file_ext})")
+                continue
+                
+            file_bytes = None
+            content_type = "application/octet-stream"
+
+            # Handle different attachment formats
+            if hasattr(att, "content"):
+                # Direct content from Chainlit
+                file_bytes = att.content
+                content_type = getattr(att, "mime", content_type)
+            elif hasattr(att, "path"):
+                # File path - read file content
+                try:
+                    with open(att.path, "rb") as f:
+                        file_bytes = f.read()
+                except Exception as e:
+                    logger.error(f"Failed to read file {att.path}: {e}")
+                    continue
+            elif hasattr(att, "url"):
+                # URL - fetch file content
+                try:
+                    resp = session.get(att.url, timeout=30)
+                    resp.raise_for_status()
+                    file_bytes = resp.content
+                    content_type = resp.headers.get("Content-Type", content_type)
+                except Exception as e:
+                    logger.error(f"Failed to fetch file from URL {att.url}: {e}")
+                    continue
+            else:
+                logger.warning(f"Unsupported attachment format for {filename}")
+                continue
+
+            if file_bytes:
+                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
+
+        # Report invalid files
+        if invalid_files:
+            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
+        
+        if not files_payload:
+            await cl.Message(content="No valid files to upload").send()
+            return
+
+        # Check file count limit
+        if len(files_payload) > 10:
+            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
+            return
+
+        # Prepare form data
+        data = {
+            "document_type": document_type,
+            "company": company or "",
+            "industry": industry or "", 
+            "report_year": report_year or "",
+            "force_upload": str(force_upload).lower()
+        }
+
+        # Send upload request
+        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
+        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
+        
+        if resp.ok:
+            try:
+                resp_json = resp.json()
+                message = resp_json.get("message", "Upload completed successfully")
+                
+            except Exception:
+                message = "Upload completed successfully"
+            await cl.Message(content=f"✅ **업로드 요청 완료!**\n\n").send()
+        else:
+            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
+            await cl.Message(content=error_msg).send()
+            logger.error(error_msg)
+
+    except Exception as e:
+        error_msg = f"Upload error: {str(e)}"
+        await cl.Message(content=error_msg).send()
+        logger.error(f"Upload error: {e}")
 
 @cl.set_chat_profiles
 async def chat_profile():
@@ -158,6 +445,9 @@ async def chat_profile():
 @cl.on_chat_start
 async def start():
     """Initialize chat session with user welcome"""
+    # Enable file uploads by setting files to None
+    files = None
+    
     # 사용자 정보 가져오기
     user = cl.user_session.get("user")
     
@@ -261,8 +551,76 @@ async def start():
     # Send settings to user
     await cl.ChatSettings(settings_components).send()
     
+    # Enable file upload UI - this is the key part that shows the upload button  
+    cl.user_session.set("files", {
+        "accept": {
+            "application/pdf": [".pdf"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"], 
+            "text/plain": [".txt"]
+        },
+        "max_size_mb": 50,
+        "max_files": 10
+    })
+    
     # Set first message flag
     cl.user_session.set("first_message", True)
+    
+    # Display file upload information with clear instructions
+    welcome_msg = f"""
+🎉 **Plan Search Chat에 오신 것을 환영합니다!**
+
+📁 **파일 업로드 기능이 활성화되었습니다**
+
+� **파일 업로드 방법:**
+1. 채팅 입력창 위의 **파일 첨부** 버튼을 클릭하세요
+2. 업로드할 파일을 선택하세요 (드래그&드롭도 가능)
+3. 파일이 자동으로 Knowledge Base에 추가됩니다
+
+✅ **지원 파일 형식:** PDF, DOCX, TXT  
+📊 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하  
+🔍 **처리 과정:** 업로드된 파일은 AI 검색을 위해 벡터화됩니다
+
+💬 **질문하기:** 파일 업로드 후 관련 질문을 해보세요!
+"""
+    
+    await cl.Message(content=welcome_msg).send()
+    
+#     # Show file upload options to user
+#     upload_options_msg = """
+# """
+    
+    # await cl.Message(content=upload_options_msg).send()
+    
+    # Show file upload dialog
+    try:
+        files = await cl.AskFileMessage(
+            content="📎 **파일을 업로드하여 Knowledge Base를 구성하세요:**\n\nPDF, DOCX, TXT 파일을 선택해주세요 (최대 10개 파일, 파일당 최대 50MB)",
+            accept=["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"],
+            max_size_mb=50,
+            max_files=10,
+            timeout=180,
+        ).send()
+        
+        # If files were uploaded, process them
+        if files:
+            await upload_files_to_backend(files, settings)
+        else:
+            await cl.Message(content="파일 업로드를 건너뛰셨습니다. 나중에 메시지와 함께 파일을 첨부하거나 '파일업로드' 명령어를 사용할 수 있습니다.").send()
+            
+    except Exception as e:
+        logger.error(f"File upload dialog error: {e}")
+        await cl.Message(content="파일 업로드 다이얼로그에서 오류가 발생했습니다. '파일업로드' 명령어를 사용하거나 메시지에 파일을 첨부해보세요.").send()
+    
+    # Add action buttons for easy file upload
+    actions = [
+        cl.Action(name="upload_files_action", value="upload_files", description="📎 파일 업로드 (다이얼로그)", payload={}),
+        cl.Action(name="help_action", value="help", description="❓ 도움말", payload={}),
+    ]
+    
+    await cl.Message(
+        content="👆 **위의 버튼을 클릭하거나 아래 방법들을 사용하세요:**",
+        actions=actions
+    ).send()
 
 @cl.on_settings_update
 async def setup_agent(settings_dict: Dict[str, Any]):
@@ -602,7 +960,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                             
                             if chunks:
                                 response_text = b''.join(chunks).decode('utf-8', errors='replace')
-                                cleaned_response = clean_response_text(response_text)  # Clean the response
+                                cleaned_response = clean_response_text(response_text) # Clean the response
                                 
                                 # Try to parse as JSON first
                                 try:
@@ -663,6 +1021,200 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     await safe_update_message(msg)
     logger.info("Streaming completed")
 
+async def upload_files_to_backend(files, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
+    """Upload files from cl.AskFileMessage to backend /upload_files endpoint"""
+    try:
+        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
+        
+        # Allowed file extensions (same as backend validation)
+        allowed_extensions = {'.pdf', '.docx', '.txt'}
+        
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(max_retries=3)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        files_payload = []
+        invalid_files = []
+        
+        for file in files:
+            # Get filename from file object
+            filename = file.name
+            
+            # Check file extension
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                invalid_files.append(f"{filename} ({file_ext})")
+                continue
+                
+            file_bytes = None
+            content_type = getattr(file, "type", "application/octet-stream")
+
+            # Handle Chainlit AskFileMessage response
+            if hasattr(file, "content") and file.content:
+                # Direct content from Chainlit
+                file_bytes = file.content
+            elif hasattr(file, "path") and file.path:
+                # File path - read file content
+                try:
+                    with open(file.path, "rb") as f:
+                        file_bytes = f.read()
+                except Exception as e:
+                    logger.error(f"Failed to read file {file.path}: {e}")
+                    continue
+            else:
+                logger.warning(f"No valid content found for file {filename}")
+                continue
+
+            if file_bytes:
+                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
+
+        # Report invalid files
+        if invalid_files:
+            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
+        
+        if not files_payload:
+            await cl.Message(content="No valid files to upload").send()
+            return
+
+        # Check file count limit
+        if len(files_payload) > 10:
+            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
+            return
+
+        # Prepare form data
+        data = {
+            "document_type": document_type,
+            "company": company or "",
+            "industry": industry or "", 
+            "report_year": report_year or "",
+            "force_upload": str(force_upload).lower()
+        }
+
+        # Send upload request
+        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
+        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
+        
+        if resp.ok:
+            try:
+                resp_json = resp.json()
+                message = resp_json.get("message", "Upload completed successfully")
+                
+            except Exception:
+                message = "Upload completed successfully"
+            await cl.Message(content=f"✅ **업로드 요청 완료!**\n\n").send()
+        else:
+            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
+            await cl.Message(content=error_msg).send()
+            logger.error(error_msg)
+
+    except Exception as e:
+        error_msg = f"Upload error: {str(e)}"
+        await cl.Message(content=error_msg).send()
+        logger.error(f"Upload error: {e}")
+
+async def upload_message_attachments_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
+    """Upload message attachments to backend (elements from messages)"""
+    try:
+        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
+        
+        # Allowed file extensions (same as backend validation)
+        allowed_extensions = {'.pdf', '.docx', '.txt'}
+        
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(max_retries=3)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        files_payload = []
+        invalid_files = []
+        
+        for att in attachments:
+            # Get filename from attachment
+            filename = getattr(att, "name", None) or getattr(att, "filename", None) or "uploaded_file"
+            
+            # Check file extension
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                invalid_files.append(f"{filename} ({file_ext})")
+                continue
+                
+            file_bytes = None
+            content_type = "application/octet-stream"
+
+            # Handle different attachment formats
+            if hasattr(att, "content"):
+                # Direct content from Chainlit
+                file_bytes = att.content
+                content_type = getattr(att, "mime", content_type)
+            elif hasattr(att, "path"):
+                # File path - read file content
+                try:
+                    with open(att.path, "rb") as f:
+                        file_bytes = f.read()
+                except Exception as e:
+                    logger.error(f"Failed to read file {att.path}: {e}")
+                    continue
+            elif hasattr(att, "url"):
+                # URL - fetch file content
+                try:
+                    resp = session.get(att.url, timeout=30)
+                    resp.raise_for_status()
+                    file_bytes = resp.content
+                    content_type = resp.headers.get("Content-Type", content_type)
+                except Exception as e:
+                    logger.error(f"Failed to fetch file from URL {att.url}: {e}")
+                    continue
+            else:
+                logger.warning(f"Unsupported attachment format for {filename}")
+                continue
+
+            if file_bytes:
+                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
+
+        # Report invalid files
+        if invalid_files:
+            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
+        
+        if not files_payload:
+            await cl.Message(content="No valid files to upload").send()
+            return
+
+        # Check file count limit
+        if len(files_payload) > 10:
+            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
+            return
+
+        # Prepare form data
+        data = {
+            "document_type": document_type,
+            "company": company or "",
+            "industry": industry or "", 
+            "report_year": report_year or "",
+            "force_upload": str(force_upload).lower()
+        }
+
+        # Send upload request
+        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
+        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
+        
+        if resp.ok:
+            try:
+                resp_json = resp.json()
+                message = resp_json.get("message", "Upload completed successfully")
+            except Exception:
+                message = "Upload completed successfully"
+            await cl.Message(content=f"✅ **업로드 완료!**\n\n📋 결과: {message}\n\n💡 이제 업로드된 문서에 대해 질문해보세요!").send()
+        else:
+            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
+            await cl.Message(content=error_msg).send()
+            logger.error(error_msg)
+
+    except Exception as e:
+        error_msg = f"Upload error: {str(e)}"
+        await cl.Message(content=error_msg).send()
+        logger.error(f"Upload error: {e}")
+
 @cl.on_message
 async def main(message: cl.Message):
     """Handle incoming messages"""
@@ -671,6 +1223,31 @@ async def main(message: cl.Message):
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
     
+    # Check for file attachments (try multiple possible attributes)
+    attachments = (getattr(message, "elements", None) or 
+                  getattr(message, "files", None) or 
+                  getattr(message, "attachments", None))
+    
+    if attachments:
+        # Handle file upload from message attachments
+        await upload_message_attachments_to_backend(attachments, settings)
+        return
+    
+    message_content = message.content
+    
+    # Handle specific commands first
+    if message_content == "파일업로드":
+        res = await cl.AskFileMessage(
+            content="업로드할 파일들을 선택해주세요 (PDF, DOCX, TXT 파일만 지원, 최대 10개 파일, 파일당 최대 50MB)",
+            accept=["pdf", "docx", "txt"],
+            max_files=10,
+            max_size_mb=50
+        ).send()
+        
+        if res:
+            await upload_files_to_backend(res, settings)
+            return
+
     # Process the message with streaming
     await stream_chat_with_api(message.content, settings)
 
@@ -685,6 +1262,55 @@ async def on_action(action: cl.Action):
     
     # Return success
     return "Chat cleared successfully"
+
+@cl.action_callback("upload_files_action")
+async def on_upload_files_action(action: cl.Action):
+    """Handle file upload action"""
+    settings = cl.user_session.get("settings", {})
+    
+    try:
+        res = await cl.AskFileMessage(
+            content="업로드할 파일들을 선택해주세요 (PDF, DOCX, TXT 파일만 지원, 최대 10개 파일, 파일당 최대 50MB)",
+            accept=["pdf", "docx", "txt"],
+            max_files=10,
+            max_size_mb=50
+        ).send()
+        
+        if res:
+            await upload_files_to_backend(res, settings)
+        else:
+            await cl.Message(content="파일이 선택되지 않았습니다.").send()
+            
+    except Exception as e:
+        logger.error(f"File upload action error: {e}")
+        await cl.Message(content="파일 업로드 중 오류가 발생했습니다.").send()
+    
+    return "File upload action completed"
+
+@cl.action_callback("help_action")
+async def on_help_action(action: cl.Action):
+    """Handle help action"""
+    help_message = """
+📖 **도움말**
+
+🔹 **파일 업로드 방법:**
+1️⃣ 채팅 입력창 하단의 📎 버튼 클릭 (있는 경우)
+2️⃣ "파일업로드" 명령어 입력
+3️⃣ 위의 "📎 파일 업로드" 버튼 클릭
+
+🔹 **지원 파일 형식:** PDF, DOCX, TXT
+🔹 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하
+
+🔹 **사용법:**
+- 파일 업로드 후 관련 질문을 입력하세요
+- 예: "이 문서의 주요 내용을 요약해주세요"
+
+❓ **문제 해결:**
+- 📎 버튼이 보이지 않으면 브라우저를 새로고침하거나 "파일업로드" 명령어를 사용하세요
+"""
+    
+    await cl.Message(content=help_message).send()
+    return "Help displayed"
 
 @cl.action_callback("show_starters_action")
 async def on_show_starters_action(action: cl.Action):
@@ -762,5 +1388,64 @@ async def on_starter_action(action: cl.Action):
     
     return f"Processing starter: {starter_label}"
 
+@cl.action_callback("check_upload_status")
+async def on_check_upload_status(action: cl.Action):
+    """Check all active upload statuses"""
+    if not active_uploads:
+        await cl.Message(content="📋 **현재 진행 중인 업로드가 없습니다.**").send()
+        return "No active uploads"
+    
+    status_message = "📋 **진행 중인 업로드 상태**\n\n"
+    
+    for upload_id, info in active_uploads.items():
+        try:
+            session = requests.Session()
+            response = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=10)
+            
+            if response.ok:
+                status_data = response.json()
+                status = status_data.get("status", "unknown")
+                progress = status_data.get("progress", 0)
+                message = status_data.get("message", "")
+                
+                status_message += f"🔹 **업로드 {upload_id[:8]}...**: {status} ({progress}%)\n"
+                status_message += f"   📄 파일: {', '.join(info['files'])}\n"
+                status_message += f"   💬 상태: {message}\n\n"
+            else:
+                status_message += f"🔹 **업로드 {upload_id[:8]}...**: 상태 확인 실패\n\n"
+                
+        except Exception as e:
+            status_message += f"🔹 **업로드 {upload_id[:8]}...**: 오류 - {str(e)}\n\n"
+    
+    await cl.Message(content=status_message).send()
+    return "Status checked"
+
+# Add the check status action to the welcome message actions
+async def start():
+    # ...existing code...
+    
+    actions = [
+        cl.Action(
+            name="upload_files_action", 
+            payload={"action": "upload"}, 
+            label="📎 파일 업로드", 
+            description="문서 파일을 업로드합니다"
+        ),
+        cl.Action(
+            name="check_upload_status", 
+            payload={"action": "status"}, 
+            label="📊 업로드 상태 확인", 
+            description="현재 진행 중인 업로드 상태를 확인합니다"
+        ),
+        cl.Action(
+            name="show_starters_action", 
+            payload={"action": "starters"}, 
+            label="🚀 빠른 시작", 
+            description="예제 질문들을 보여줍니다"
+        )
+    ]
+    
+    await cl.Message(content=welcome_msg, actions=actions).send()
+    
 if __name__ == "__main__":
     cl.run()

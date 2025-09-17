@@ -80,7 +80,7 @@ class UnifiedFileUploadPlugin:
             logger.error(f"Error generating embedding: {e}")
             raise
     
-    def _generate_file_hash(self, file_path: str) -> str:
+    def _generate_doc_hash(self, file_path: str) -> str:
         """Generate MD5 hash of file content for duplicate detection."""
         try:
             hash_md5 = hashlib.md5()
@@ -111,6 +111,7 @@ class UnifiedFileUploadPlugin:
     async def _process_pdf_file(
         self, 
         file_path: str, 
+        original_filename: str,  # 새로운 매개변수 추가
         document_type: str,
         company: str,
         industry: str,
@@ -135,65 +136,71 @@ class UnifiedFileUploadPlugin:
             logger.info(f"Processed PDF with Document Intelligence: {page_count} pages")
             
             # Generate file hash for duplicate detection
-            file_hash = self._generate_file_hash(file_path)
-            file_name = Path(file_path).name
+            file_hash = self._generate_doc_hash(file_path)
+            file_name = original_filename  # 실제 파일명 사용
             
             documents = []
             
             # Process paragraphs from Document Intelligence
             if result.paragraphs:
                 for para_num, paragraph in enumerate(result.paragraphs, 1):
-                    para_content = paragraph.content
+                    # print(f"Processing paragraph {para_num}: {paragraph.content[:100]}...")
+                    para_content = paragraph.content.strip()
                     page_number = paragraph.bounding_regions[0].page_number if paragraph.bounding_regions else 1
                     
-                    # Split paragraph content into chunks if it's too long
-                    chunks = self.text_splitter.split_text(para_content)
+                    # Skip very short paragraphs
+                    if len(para_content) < 50:
+                        continue
                     
-                    # Process each chunk
-                    for chunk_num, chunk_text in enumerate(chunks, 1):
-                        if len(chunk_text.strip()) < 50:  # Skip very short chunks
-                            continue
+                    try:
+                        # Generate embedding for the entire paragraph
+                        embedding = await self._get_embedding(para_content)
                         
-                        try:
-                            # Generate embedding for chunk
-                            embedding = await self._get_embedding(chunk_text)
-                            
-                            # Create document object for vector storage
-                            doc_id = f"{file_hash}_{para_num}_{chunk_num}"
-                            
-                            document = {
-                                "id": doc_id,
-                                "content": chunk_text,
-                                "content_vector": embedding,
-                                "title": f"{file_name} - Para {para_num}, Chunk {chunk_num}",
-                                "file_name": file_name,
-                                "file_hash": file_hash,
-                                "page_number": page_number,
-                                "paragraph_number": para_num,
-                                "chunk_number": chunk_num,
-                                "document_type": document_type,
-                                "company": company,
-                                "industry": industry,
-                                "report_year": report_year,
-                                "source": file_path,
-                                "metadata": json.dumps({
-                                    "total_pages": page_count,
-                                    "total_paragraphs": len(result.paragraphs),
-                                    "total_chunks_in_paragraph": len(chunks),
-                                    "file_size": Path(file_path).stat().st_size,
-                                    "processing_method": "document_intelligence"
-                                })
-                            }
-                            
-                            documents.append(document)
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing chunk {chunk_num} of paragraph {para_num}: {e}")
-                            continue
+                        # Create document object for vector storage
+                        doc_id = f"{file_hash}_para_{para_num}"
+                        
+                        document = {
+                            "docId": doc_id,
+                            "content": para_content,  # Full paragraph content
+                            "content_vector": embedding,
+                            "title": f"{file_name} - Paragraph {para_num}",
+                            "file_name": file_name,  # 실제 파일명
+                            "file_hash": file_hash,
+                            "page_number": page_number,
+                            "paragraph_number": para_num,
+                            "chunk_number": 1,  # Always 1 since we're not sub-chunking
+                            "document_type": document_type,
+                            "company": company,
+                            "industry": industry,
+                            "report_year": report_year,
+                            "source": file_path,  # 임시 파일 경로는 source에 유지
+                            "metadata": json.dumps({
+                                "total_pages": page_count,
+                                "total_paragraphs": len(result.paragraphs),
+                                "paragraph_length": len(para_content),
+                                "file_size": Path(file_path).stat().st_size,
+                                "processing_method": "document_intelligence_paragraph_level"
+                            })
+                        }
+                        
+                        documents.append(document)
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing paragraph {para_num}: {e}")
+                        continue
             else:
-                # Fallback: if no paragraphs, process the entire content
-                logger.warning("No paragraphs found, processing entire content")
-                chunks = self.text_splitter.split_text(content)
+                # Fallback: if no paragraphs, split content into logical chunks
+                logger.warning("No paragraphs found, using content-based chunking")
+                
+                # Use a larger chunk size for content-based splitting
+                content_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=2000,  # Larger chunks for better context
+                    chunk_overlap=300,
+                    length_function=len,
+                    separators=["\n\n\n", "\n\n", "\n", ". ", " "]  # Prioritize paragraph breaks
+                )
+                
+                chunks = content_splitter.split_text(content)
                 
                 for chunk_num, chunk_text in enumerate(chunks, 1):
                     if len(chunk_text.strip()) < 50:
@@ -204,11 +211,11 @@ class UnifiedFileUploadPlugin:
                         doc_id = f"{file_hash}_content_{chunk_num}"
                         
                         document = {
-                            "id": doc_id,
+                            "docId": doc_id,
                             "content": chunk_text,
                             "content_vector": embedding,
-                            "title": f"{file_name} - Content Chunk {chunk_num}",
-                            "file_name": file_name,
+                            "title": f"{file_name} - Content Section {chunk_num}",
+                            "file_name": file_name,  # 실제 파일명
                             "file_hash": file_hash,
                             "page_number": 1,
                             "paragraph_number": 0,
@@ -221,8 +228,9 @@ class UnifiedFileUploadPlugin:
                             "metadata": json.dumps({
                                 "total_pages": page_count,
                                 "total_chunks": len(chunks),
+                                "chunk_length": len(chunk_text),
                                 "file_size": Path(file_path).stat().st_size,
-                                "processing_method": "document_intelligence_fallback"
+                                "processing_method": "content_based_chunking"
                             })
                         }
                         
@@ -232,7 +240,7 @@ class UnifiedFileUploadPlugin:
                         logger.error(f"Error processing content chunk {chunk_num}: {e}")
                         continue
             
-            logger.info(f"Processed {len(documents)} chunks from {page_count} pages using Document Intelligence")
+            logger.info(f"Processed {len(documents)} paragraph-level chunks from {page_count} pages")
             return documents
             
         except Exception as e:
@@ -326,91 +334,85 @@ Ready to upload files?""",
         return json.dumps(response)
     
     @kernel_function(
-        description="Upload and process files for document search. Call this when files need to be processed.",
-        name="upload_files"
+        description="Upload and process documents for AI Search. Call this when files need to be processed as unstructured document data.",
+        name="upload_files"  # 함수명을 upload_files로 변경 (main.py에서 호출하는 이름과 맞춤)
     )
     async def upload_files(
         self,
         file_paths: str,  # JSON string of file paths
+        file_names: str = "",  # JSON string of original filenames 추가
         document_type: str = "GENERAL",
         company: str = "",
         industry: str = "",
         report_year: str = "",
         force_upload: str = "false"
     ) -> str:
-        """
-        Upload and process multiple files for document search.
-        
-        Args:
-            file_paths: JSON string containing list of file paths to upload
-            document_type: Type of document (IR_REPORT, MANUAL, GENERAL, etc.)
-            company: Company name associated with the documents
-            industry: Industry category
-            report_year: Year of the report
-            force_upload: Whether to force upload even if file exists ("true"/"false")
-            
-        Returns:
-            JSON string with upload results
-        """
+        """Upload and process multiple files for document search."""
         try:
-            # Parse file paths from JSON string
+            # Parse file paths and names from JSON strings
             try:
                 file_paths_list = json.loads(file_paths)
+                file_names_list = json.loads(file_names) if file_names else []
             except json.JSONDecodeError:
                 # If not JSON, assume single file path
                 file_paths_list = [file_paths]
-            
+                file_names_list = [Path(file_paths).name]
+        
+            # Ensure we have matching file names
+            if len(file_names_list) != len(file_paths_list):
+                file_names_list = [Path(fp).name for fp in file_paths_list]
+        
             logger.info(f"Starting upload for {len(file_paths_list)} files")
-            
+        
             # Convert string boolean to actual boolean
             force_upload_bool = force_upload.lower() == "true"
-            
+        
             results = []
             total_documents = 0
-            
-            for file_path in file_paths_list:
+        
+            for file_path, original_filename in zip(file_paths_list, file_names_list):
                 try:
                     # Check if file exists
                     if not Path(file_path).exists():
                         results.append({
-                            "file": file_path,
+                            "file": original_filename,  # 실제 파일명으로 표시
                             "status": "error",
                             "message": "File not found"
                         })
                         continue
-                    
+                
                     # Generate file hash for duplicate check
-                    file_hash = self._generate_file_hash(file_path)
-                    
+                    file_hash = self._generate_doc_hash(file_path)
+                
                     # Check if file already exists in vector DB
                     if not force_upload_bool and await self._file_exists_in_vector_db(file_hash):
                         results.append({
-                            "file": file_path,
+                            "file": original_filename,
                             "status": "skipped",
                             "message": "File already exists in vector database"
                         })
                         continue
-                    
+                
                     # Process file based on extension
-                    file_extension = Path(file_path).suffix.lower()
-                    
+                    file_extension = Path(original_filename).suffix.lower()
+                
                     if file_extension == '.pdf':
                         documents = await self._process_pdf_file(
-                            file_path, document_type, company, industry, report_year
+                            file_path, original_filename, document_type, company, industry, report_year
                         )
                     else:
                         results.append({
-                            "file": file_path,
+                            "file": original_filename,
                             "status": "error",
                             "message": f"Unsupported file type: {file_extension}"
                         })
                         continue
-                    
+                
                     if documents:
                         # Upload to vector database
                         if await self._upload_documents_to_vector_db(documents):
                             results.append({
-                                "file": file_path,
+                                "file": original_filename,
                                 "status": "success",
                                 "message": f"Successfully uploaded {len(documents)} chunks",
                                 "chunks_count": len(documents)
@@ -418,28 +420,28 @@ Ready to upload files?""",
                             total_documents += len(documents)
                         else:
                             results.append({
-                                "file": file_path,
+                                "file": original_filename,
                                 "status": "error",
                                 "message": "Failed to upload to vector database"
                             })
                     else:
                         results.append({
-                            "file": file_path,
+                            "file": original_filename,
                             "status": "error",
                             "message": "No content could be extracted from file"
                         })
                         
                 except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {e}")
+                    logger.error(f"Error processing file {original_filename}: {e}")
                     results.append({
-                        "file": file_path,
+                        "file": original_filename,
                         "status": "error",
                         "message": str(e)
                     })
-            
+        
             # Prepare final response
             successful_uploads = [r for r in results if r["status"] == "success"]
-            
+        
             response = {
                 "status": "completed",
                 "total_files": len(file_paths_list),
@@ -447,10 +449,10 @@ Ready to upload files?""",
                 "total_documents_uploaded": total_documents,
                 "results": results
             }
-            
+        
             logger.info(f"Upload completed: {len(successful_uploads)}/{len(file_paths_list)} files successful")
             return json.dumps(response)
-                
+            
         except Exception as e:
             error_msg = f"Error in file upload: {str(e)}"
             logger.error(error_msg)
@@ -461,13 +463,13 @@ Ready to upload files?""",
             })
     
     @kernel_function(
-        description="Check if files exist in the vector database",
-        name="check_files_status"
+        description="Check if documents exist in the vector database",
+        name="check_docs_status"
     )
-    async def check_files_status(self, file_names: str) -> str:
+    async def check_docs_status(self, file_names: str) -> str:
         """
-        Check the status of files in the vector database.
-        
+        Check the status of documents in the vector database.
+
         Args:
             file_names: Comma-separated string of file names to check
             

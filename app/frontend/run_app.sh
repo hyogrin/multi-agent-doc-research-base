@@ -25,13 +25,6 @@ echo "✅ uv is available"
 # Check if dependencies are installed
 echo "📦 Checking dependencies..."
 
-if uv pip list | grep -q "chainlit"; then
-    echo "✅ Chainlit is installed"
-else
-    echo "❌ Chainlit is not installed. Installing dependencies..."
-    uv sync
-fi
-
 # Check if environment variables are set
 echo "🔧 Checking environment variables..."
 

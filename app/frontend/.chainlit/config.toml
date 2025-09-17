@@ -121,5 +121,28 @@ login_page_image = "/public/images/ai_foundry_background.png"
 #dark = "#160d5dff"
 #light = "#FFE7EB"
 
+[files]
+# Enable file upload functionality
+allow_upload = true
+
+# Maximum file size in MB
+max_size_mb = 50
+
+# Maximum number of files per upload
+max_files = 10
+
+# List of accepted file extensions or MIME types
+accept = [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
+    "text/plain",
+    ".pdf",
+    ".docx", 
+    ".txt"
+]
+
+# Ask the user before uploading a file
+ask_user = false
+
 [meta]
 generated_by = "1.0.0"
