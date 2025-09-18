@@ -407,8 +407,8 @@ class PlanSearchExecutorSK:
                     doc_contexts = []
                     combined_doc_context = ""  # 초기화 추가
                     seen_documents = set()  # 중복 문서 방지용
-                    MAX_CONTEXT_LENGTH = 100000  # 10만자로 제한
-                    MAX_DOCUMENT_LENGTH = 50000   # 문서당 50000자로 제한
+                    MAX_CONTEXT_LENGTH = 400000  # 40만자로 제한 (한글 1글자 = 1토큰 가정)
+                    MAX_DOCUMENT_LENGTH = 10000   # 문서당 10000자로 제한
                     current_total_length = 0  # 현재 누적 길이 추적
                     
                     # Process each search query individually
@@ -423,7 +423,7 @@ class PlanSearchExecutorSK:
                             KernelArguments(
                                 query=query,
                                 search_type="semantic",
-                                top_k=2,  # 쿼리당 1개로 제한
+                                top_k=3, 
                                 include_content=True
                             )
                         )
@@ -461,10 +461,6 @@ class PlanSearchExecutorSK:
                                         else:
                                             content_to_add = original_content
                                             
-                                    elif 'content_preview' in doc and doc['content_preview']:
-                                        content_preview = doc['content_preview'][:MAX_DOCUMENT_LENGTH]
-                                        content_to_add = content_preview
-                                        logger.info(f"Using content_preview: {len(content_to_add)} chars")
                                     elif 'summary' in doc and doc['summary']:
                                         content_to_add = doc['summary'][:MAX_DOCUMENT_LENGTH]
                                         logger.info(f"Using summary: {len(content_to_add)} chars")

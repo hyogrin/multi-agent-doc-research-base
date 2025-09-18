@@ -5,7 +5,6 @@ import sys
 import json
 import logging
 import base64
-import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from i18n.locale_msg_front import UI_TEXT, EXAMPLE_PROMPTS
@@ -66,7 +65,7 @@ UPLOAD_API_URL = os.getenv("UPLOAD_API_URL", SK_API_URL.rsplit("/", 1)[0] + "/up
 UPLOAD_STATUS_URL = os.getenv("UPLOAD_STATUS_URL", SK_API_URL.rsplit("/", 1)[0] + "/upload_status")
 
 # Global variable to track active uploads
-active_uploads = {}  # { upload_id: { files: [...], message: cl.Message, task: asyncio.Task } }
+active_uploads = {}
 
 
 # Define the search engines
@@ -140,161 +139,6 @@ def get_starters_for_language(language: str):
             )
             starters.append(starter)
             logger.info(f"Added starter: {category} - {starter.label}")
-
-async def check_upload_status_once(upload_id: str) -> dict | None:
-    """단발성 업로드 상태 조회 (폴링 루프 내부/액션 버튼에서 호출)"""
-    try:
-        session = requests.Session()
-        resp = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=15)
-        if not resp.ok:
-            return None
-        return resp.json()
-    except Exception as e:
-        logger.warning(f"[upload:{upload_id}] 상태 조회 실패: {e}")
-        return None
-
-async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: float = 2.0):
-    """주기적으로 상태를 폴링해서 동일 메시지를 갱신"""
-    try:
-        while True:
-            status_data = await check_upload_status_once(upload_id)
-            if not status_data:
-                msg.content = f"⚠️ 업로드 ID {upload_id[:8]} 상태 조회 실패. 재시도 중..."
-                await msg.update()
-                await asyncio.sleep(interval)
-                continue
-
-            status = status_data.get("status", "unknown")
-            message = status_data.get("message", "")
-            progress = int(status_data.get("progress", 0))
-            file_results = status_data.get("file_results", [])
-
-            if status == "processing":
-                green_blocks = progress // 10
-                progress_bar = "🟩" * green_blocks + "⬜" * (10 - green_blocks)
-                msg.content = (
-                    f"📤 **업로드 진행 중** (ID: {upload_id[:8]})\n"
-                    f"{message}\n\n"
-                    f"진행률: {progress}%\n{progress_bar}"
-                )
-                await msg.update()
-            elif status == "completed":
-                success_cnt = len([r for r in file_results if r.get("status") == "success"])
-                fail_cnt = len([r for r in file_results if r.get("status") == "error"])
-                msg.content = (
-                    f"✅ **업로드 완료** (ID: {upload_id[:8]})\n"
-                    f"{message}\n\n"
-                    f"📄 성공: {success_cnt} / 실패: {fail_cnt}\n"
-                    f"💡 이제 문서에 대해 질문해보세요!"
-                )
-                await msg.update()
-                # 예시 질문 자동 전송 (1회)
-                entry = active_uploads.get(upload_id, {})
-                if not entry.get("examples_sent"):
-                    await send_example_questions(upload_id)
-                    entry["examples_sent"] = True
-                    active_uploads[upload_id] = entry
-                break
-            elif status == "error":
-                msg.content = f"❌ **업로드 실패** (ID: {upload_id[:8]})\n{message}"
-                await msg.update()
-                break
-            else:
-                msg.content = f"ℹ️ 알 수 없는 상태 ({status}) - 재시도 중..."
-                await msg.update()
-
-            await asyncio.sleep(interval)
-    except asyncio.CancelledError:
-        logger.info(f"[upload:{upload_id}] 폴링 태스크 취소됨")
-    except Exception as e:
-        logger.error(f"[upload:{upload_id}] 폴링 중 예외: {e}")
-        msg.content += f"\n\n⚠️ 상태 업데이트 중 오류 발생: {e}"
-        await msg.update()
-    finally:
-        # 완료/오류/취소 시 registry 정리
-        entry = active_uploads.get(upload_id)
-        if entry:
-            entry["task"] = None
-
-async def send_example_questions(upload_id: str):
-    """업로드 완료 후 문서 기반 예시 질문 1회 자동 전송"""
-    entry = active_uploads.get(upload_id)
-    if not entry:
-        return
-    files = entry.get("files", [])
-    # 세션에서 언어 가져오기
-    settings = cl.user_session.get("settings")
-    language = getattr(settings, "language", "ko-KR") if settings else "ko-KR"
-
-    # 파일명 기반 간단한 도메인 추론 (예: 재무/IR 관련)
-    lower_names = " ".join(files).lower()
-    is_finance = any(k in lower_names for k in ["ir", "earnings", "financial", "재무", "실적", "분기", "annual", "report"])
-
-    # 파일 표시 (최대 3개)
-    display_files = files[:3]
-    file_line = ""
-    if display_files:
-        if language.startswith("ko"):
-            file_line = "📂 대상 파일: " + ", ".join(display_files)
-        else:
-            file_line = "📂 Files: " + ", ".join(display_files)
-
-    if language.startswith("ko"):
-        header = "💡 **이 문서로 질문 예시**"
-        if is_finance:
-            examples = [
-                "이 보고서의 핵심 재무 지표를 요약해줘",
-                "전년 대비 변화율이 큰 항목 3가지를 알려줘",
-                "경영진 코멘트(또는 전망) 부분만 뽑아 정리해줘",
-                "매출/영업이익/순이익 추이를 표로 만들어줘",
-                "위험 요인(Risk factor)이나 경고 신호가 있으면 정리해줘"
-            ]
-        else:
-            examples = [
-                "이 문서의 핵심 내용을 5줄로 요약해줘",
-                "가장 중요한 인사이트 3가지만 뽑아줘",
-                "문서에 등장하는 주요 개념/용어를 설명과 함께 정리해줘",
-                "이 문서가 다루는 문제와 제안된 해결책을 정리해줘",
-                "추가로 조사하면 좋을 관련 주제 5가지를 제안해줘"
-            ]
-        follow = "다른 형태의 분석이나 비교가 필요하면 자연어로 자유롭게 질문해주세요."
-    else:
-        header = "💡 **Example Questions for These Documents**"
-        if is_finance:
-            examples = [
-                "Summarize the key financial indicators from this report.",
-                "List top 3 metrics with largest YoY change.",
-                "Extract and summarize management outlook or guidance.",
-                "Create a table of revenue / operating income / net income trends.",
-                "Highlight any risk factors or warning signals mentioned."
-            ]
-        else:
-            examples = [
-                "Summarize the core points in 5 concise bullet lines.",
-                "List the top 3 most important insights with brief rationale.",
-                "Extract key concepts/terms and explain each briefly.",
-                "Summarize the problem addressed and proposed solution.",
-                "Suggest 5 related follow-up research questions."
-            ]
-        follow = "Feel free to ask for any other analysis or comparison you need."
-
-    bullets = "\n".join(f"• {q}" for q in examples)
-    content = f"{header}\n\n{file_line}\n\n{bullets}\n\n{follow}"
-    await cl.Message(content=content).send()
-
-def start_progress_tracker(upload_id: str, files: List[str], base_message: cl.Message):
-    """비동기 폴링 태스크 시작 및 registry 저장"""
-    if upload_id in active_uploads and active_uploads[upload_id].get("task"):
-        logger.info(f"[upload:{upload_id}] 기존 폴링 태스크 재사용")
-        return
-    task = asyncio.create_task(poll_upload_status_loop(upload_id, base_message))
-    active_uploads[upload_id] = {
-        "files": files,
-        "message": base_message,
-        "task": task, 
-        "examples_sent": False   # 추가
-    }
-    logger.info(f"[upload:{upload_id}] 업로드 상태 추적 시작 (files={files})")
 
 async def check_upload_status(upload_id: str, status_message: cl.Message = None):
     """Check upload status and update message"""
@@ -451,19 +295,15 @@ async def upload_files_to_backend(attachments, settings, document_type: str = "I
                     # Store upload info
                     active_uploads[upload_id] = {
                         "files": valid_files,
-                        "started_at": asyncio.get_event_loop().time(),
-                        "examples_sent": False
+                        "started_at": asyncio.get_event_loop().time()
                     }
                     
                     # Start status checking
-                    status_message.content = (
-                        f"📤 **업로드 요청 전송 성공**\n"
-                        f"업로드 ID: {upload_id[:8]}...\n"
-                        f"파일 처리 준비 중..."
-                    )
+                    status_message.content = f"📤 **업로드 시작됨**\n\n파일들이 백그라운드에서 처리되고 있습니다...\n\n업로드 ID: {upload_id[:8]}..."
                     await status_message.update()
-                    # 비동기 폴링 시작
-                    start_progress_tracker(upload_id, valid_files, status_message)
+                    
+                    # Check status continuously
+                    await check_upload_status(upload_id, status_message)
                 else:
                     message = resp_json.get("message", "업로드 완료")
                     status_message.content = f"✅ **업로드 응답**: {message}"
@@ -572,14 +412,7 @@ async def upload_message_attachments_to_backend(attachments, settings, document_
                 
             except Exception:
                 message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 요청 완료!** (배치 처리)").send()
+            await cl.Message(content=f"✅ **업로드 요청 완료!**\n\n").send()
         else:
             error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
             await cl.Message(content=error_msg).send()
@@ -778,7 +611,16 @@ async def start():
         logger.error(f"File upload dialog error: {e}")
         await cl.Message(content="파일 업로드 다이얼로그에서 오류가 발생했습니다. '파일업로드' 명령어를 사용하거나 메시지에 파일을 첨부해보세요.").send()
     
+    # Add action buttons for easy file upload
+    actions = [
+        cl.Action(name="upload_files_action", value="upload_files", description="📎 파일 업로드 (다이얼로그)", payload={}),
+        cl.Action(name="help_action", value="help", description="❓ 도움말", payload={}),
+    ]
     
+    await cl.Message(
+        content="👆 **위의 버튼을 클릭하거나 아래 방법들을 사용하세요:**",
+        actions=actions
+    ).send()
 
 @cl.on_settings_update
 async def setup_agent(settings_dict: Dict[str, Any]):
@@ -1260,14 +1102,7 @@ async def upload_files_to_backend(files, settings, document_type: str = "IR_REPO
                 
             except Exception:
                 message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 요청 완료!** (배치 처리)").send()
+            await cl.Message(content=f"✅ **업로드 요청 완료!**\n\n").send()
         else:
             error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
             await cl.Message(content=error_msg).send()
@@ -1369,14 +1204,7 @@ async def upload_message_attachments_to_backend(attachments, settings, document_
                 message = resp_json.get("message", "Upload completed successfully")
             except Exception:
                 message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 완료!**\n\n📋 결과: {message}\n\n💡 이제 업로드된 문서에 대해 질문해보세요!").send()
+            await cl.Message(content=f"✅ **업로드 완료!**\n\n📋 결과: {message}\n\n💡 이제 업로드된 문서에 대해 질문해보세요!").send()
         else:
             error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
             await cl.Message(content=error_msg).send()
@@ -1562,24 +1390,36 @@ async def on_starter_action(action: cl.Action):
 
 @cl.action_callback("check_upload_status")
 async def on_check_upload_status(action: cl.Action):
-    """모든 활성 업로드의 최신 상태 요약 출력"""
+    """Check all active upload statuses"""
     if not active_uploads:
         await cl.Message(content="📋 **현재 진행 중인 업로드가 없습니다.**").send()
         return "No active uploads"
-    lines = ["📊 **현재 진행 중인 업로드 목록**\n"]
-    for upload_id, info in active_uploads.items():
-        state_line = ""
-        # 메시지 객체의 최신 content 일부 활용
-        msg_obj = info.get("message")
-        preview = ""
-        if msg_obj and getattr(msg_obj, "content", None):
-            preview = msg_obj.content.splitlines()[0][:60]
-        lines.append(f"• {upload_id[:8]} ({', '.join(info['files'])})")
-        if preview:
-            lines.append(f"  ↳ {preview}")
-    await cl.Message(content="\n".join(lines)).send()
-    return "Listed active uploads"
     
+    status_message = "📋 **진행 중인 업로드 상태**\n\n"
+    
+    for upload_id, info in active_uploads.items():
+        try:
+            session = requests.Session()
+            response = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=10)
+            
+            if response.ok:
+                status_data = response.json()
+                status = status_data.get("status", "unknown")
+                progress = status_data.get("progress", 0)
+                message = status_data.get("message", "")
+                
+                status_message += f"🔹 **업로드 {upload_id[:8]}...**: {status} ({progress}%)\n"
+                status_message += f"   📄 파일: {', '.join(info['files'])}\n"
+                status_message += f"   💬 상태: {message}\n\n"
+            else:
+                status_message += f"🔹 **업로드 {upload_id[:8]}...**: 상태 확인 실패\n\n"
+                
+        except Exception as e:
+            status_message += f"🔹 **업로드 {upload_id[:8]}...**: 오류 - {str(e)}\n\n"
+    
+    await cl.Message(content=status_message).send()
+    return "Status checked"
+
 # Add the check status action to the welcome message actions
 async def start():
     # ...existing code...

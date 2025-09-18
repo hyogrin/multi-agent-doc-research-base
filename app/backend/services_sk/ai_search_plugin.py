@@ -187,7 +187,7 @@ class AISearchPlugin:
                 search_text="*",
                 filter=filter_expression,
                 top=top,
-                select="docId,file_name,documentType,industry,company,reportYear,page_number,upload_date,summary,keywords",
+                select="docId,file_name,document_type,industry,company,report_year,page_number,upload_date,summary,keywords",
                 order_by=[order_by] if order_by else None
             )
             
@@ -283,13 +283,11 @@ class AISearchPlugin:
     ):
         """Execute search based on search type."""
         select_fields = self._get_select_fields(include_content)
-        
-        if search_type == "hybrid":
-            # Hybrid search: combines text and vector search
-            vector_queries = [
+
+        vector_queries = [
                 VectorizedQuery(
                     vector=query_vector,
-                    k_nearest_neighbors=top_k * 2,  # Get more for reranking
+                    k_nearest_neighbors=top_k,
                     fields="content_vector"
                 ),
                 VectorizedQuery(
@@ -298,6 +296,9 @@ class AISearchPlugin:
                     fields="summary_vector"
                 )
             ]
+        
+        if search_type == "hybrid":
+            # Hybrid search: combines text and vector search
             
             return self.search_client.search(
                 search_text=query,
@@ -315,6 +316,7 @@ class AISearchPlugin:
             # Semantic search only
             return self.search_client.search(
                 search_text=query,
+                vector_queries=vector_queries,
                 filter=filter_expression,
                 query_type=QueryType.SEMANTIC,
                 semantic_configuration_name="semantic-config",
@@ -326,14 +328,6 @@ class AISearchPlugin:
             
         elif search_type == "vector":
             # Vector search only
-            vector_queries = [
-                VectorizedQuery(
-                    vector=query_vector,
-                    k_nearest_neighbors=top_k,
-                    fields="content_vector"
-                )
-            ]
-            
             return self.search_client.search(
                 search_text=None,
                 vector_queries=vector_queries,
