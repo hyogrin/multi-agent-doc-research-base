@@ -437,7 +437,7 @@ class PlanSearchExecutorSK:
                                 logger.info(f"Search result doc length: {len(documents)}")
                                 logger.info(f"Search result value preview: {str(documents)[:100]}")
 
-                                for doc_idx, doc in enumerate(documents[:2], 1):  # 각 쿼리에서 2개 문서만
+                                for doc_idx, doc in enumerate(documents[:10], 1):  # 각 쿼리에서 10개 문서만
                                     # 문서 ID나 제목으로 중복 확인
                                     doc_id = doc.get('id') or doc.get('title') or doc.get('url', f"doc_{i}_{doc_idx}")
                                     
@@ -449,6 +449,9 @@ class PlanSearchExecutorSK:
                                     
                                     # 문서 내용 처리
                                     content_to_add = None
+                                    summary_to_add = None
+                                    page_number_to_add = None
+                                    file_name_to_add = None
                                     
                                     if 'content' in doc and doc['content']:
                                         original_content = doc['content']
@@ -462,8 +465,14 @@ class PlanSearchExecutorSK:
                                             content_to_add = original_content
                                             
                                     elif 'summary' in doc and doc['summary']:
-                                        content_to_add = doc['summary'][:MAX_DOCUMENT_LENGTH]
-                                        logger.info(f"Using summary: {len(content_to_add)} chars")
+                                        summary_to_add = doc['summary']
+                                        logger.info(f"Using summary: {summary_to_add}")
+                                    elif 'page_number' in doc and doc['page_number']:
+                                        page_number_to_add = doc['page_number']
+                                        logger.info(f"Using page number: {page_number_to_add}")
+                                    elif 'file_name' in doc and doc['file_name']:
+                                        file_name_to_add = doc['file_name']
+                                        logger.info(f"Using file name: {file_name_to_add}")
                                     else:
                                         logger.warning(f"Document {doc_idx} has no usable content for query '{query}'")
                                         continue
@@ -473,6 +482,18 @@ class PlanSearchExecutorSK:
                                         doc_contexts.append(content_to_add)
                                         current_total_length += len(content_to_add)
                                         logger.info(f"Added document content: {len(content_to_add)} chars, total: {current_total_length}")
+                                        if summary_to_add and current_total_length + len(summary_to_add) <= MAX_CONTEXT_LENGTH:
+                                            doc_contexts.append(summary_to_add)
+                                            current_total_length += len(summary_to_add)
+                                            logger.info(f"Added document summary: {len(summary_to_add)} chars, total: {current_total_length}")
+                                        if page_number_to_add and current_total_length + len(page_number_to_add) <= MAX_CONTEXT_LENGTH:
+                                            doc_contexts.append(page_number_to_add)
+                                            current_total_length += len(page_number_to_add)
+                                            logger.info(f"Added document page number: {len(page_number_to_add)} chars, total: {current_total_length}")
+                                        if file_name_to_add and current_total_length + len(file_name_to_add) <= MAX_CONTEXT_LENGTH:
+                                            doc_contexts.append(file_name_to_add)
+                                            current_total_length += len(file_name_to_add)
+                                            logger.info(f"Added document file name: {len(file_name_to_add)} chars, total: {current_total_length}")
                                     else:
                                         logger.warning(f"Skipping document due to length limit. Would exceed {MAX_CONTEXT_LENGTH} chars")
                                         break  

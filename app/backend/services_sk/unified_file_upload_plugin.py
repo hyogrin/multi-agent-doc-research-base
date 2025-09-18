@@ -38,7 +38,7 @@ class SemanticAwareTextSplitter:
     """
     
     def __init__(self, 
-                 target_tokens: int = 400,
+                 target_tokens: int = 500,
                  token_variance: int = 100,
                  overlap_percentage: float = 0.1,
                  model_name: str = "gpt-4"):
