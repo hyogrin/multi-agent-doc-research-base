@@ -1580,32 +1580,5 @@ async def on_check_upload_status(action: cl.Action):
     await cl.Message(content="\n".join(lines)).send()
     return "Listed active uploads"
     
-# Add the check status action to the welcome message actions
-async def start():
-    # ...existing code...
-    
-    actions = [
-        cl.Action(
-            name="upload_files_action", 
-            payload={"action": "upload"}, 
-            label="📎 파일 업로드", 
-            description="문서 파일을 업로드합니다"
-        ),
-        cl.Action(
-            name="check_upload_status", 
-            payload={"action": "status"}, 
-            label="📊 업로드 상태 확인", 
-            description="현재 진행 중인 업로드 상태를 확인합니다"
-        ),
-        cl.Action(
-            name="show_starters_action", 
-            payload={"action": "starters"}, 
-            label="🚀 빠른 시작", 
-            description="예제 질문들을 보여줍니다"
-        )
-    ]
-    
-    await cl.Message(content=welcome_msg, actions=actions).send()
-    
 if __name__ == "__main__":
     cl.run()

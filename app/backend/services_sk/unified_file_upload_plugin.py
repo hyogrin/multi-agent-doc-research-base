@@ -905,7 +905,7 @@ class UnifiedFileUploadPlugin:
             logger.info(f"Successfully uploaded {len(documents)} documents to vector database")
             return True
         except Exception as e:
-            logger.error(f"Error processing PDF file {file_path}: {e}")
+            logger.error(f"Error processing PDF file {e}")
             return []
 
     @kernel_function(
