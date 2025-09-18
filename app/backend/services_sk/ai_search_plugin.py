@@ -75,8 +75,6 @@ class AISearchPlugin:
         industry: Optional[str] = None,
         company: Optional[str] = None,
         report_year: Optional[str] = None,
-        target_audience: Optional[str] = None,
-        topics: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Search documents in Azure AI Search using various search methods.
@@ -91,8 +89,6 @@ class AISearchPlugin:
             industry: Filter by industry
             company: Filter by company
             report_year: Filter by report year
-            target_audience: Filter by target audience
-            topics: Filter by topics
         
         Returns:
             Dict containing search results and metadata
@@ -103,7 +99,7 @@ class AISearchPlugin:
             
             # Build filter expression
             filter_expression = self._build_filters(
-                filters, document_type, industry, company, report_year, target_audience, topics
+                filters, document_type, industry, company, report_year
             )
             
             # Configure search based on search type
@@ -191,7 +187,7 @@ class AISearchPlugin:
                 search_text="*",
                 filter=filter_expression,
                 top=top,
-                select="docId,docName,fileName,documentType,industry,company,reportYear,author,pageCount,uploadDate,summary,keywords",
+                select="docId,file_name,documentType,industry,company,reportYear,page_number,upload_date,summary,keywords",
                 order_by=[order_by] if order_by else None
             )
             
@@ -257,9 +253,7 @@ class AISearchPlugin:
         document_type: Optional[str],
         industry: Optional[str],
         company: Optional[str],
-        report_year: Optional[str],
-        target_audience: Optional[str],
-        topics: Optional[List[str]]
+        report_year: Optional[str]
     ) -> Optional[str]:
         """Build OData filter expression."""
         filter_parts = []
@@ -267,19 +261,14 @@ class AISearchPlugin:
         if filters:
             filter_parts.append(filters)
         if document_type:
-            filter_parts.append(f"documentType eq '{document_type}'")
+            filter_parts.append(f"document_type eq '{document_type}'")
         if industry:
             filter_parts.append(f"industry eq '{industry}'")
         if company:
             filter_parts.append(f"company eq '{company}'")
         if report_year:
-            filter_parts.append(f"reportYear eq '{report_year}'")
-        if target_audience:
-            filter_parts.append(f"targetAudience/any(t: t eq '{target_audience}')")
-        if topics:
-            topic_filters = [f"topics/any(t: t eq '{topic}')" for topic in topics]
-            if topic_filters:
-                filter_parts.append(f"({' or '.join(topic_filters)})")
+            filter_parts.append(f"report_year eq '{report_year}'")
+
         
         return " and ".join(filter_parts) if filter_parts else None
     
@@ -301,12 +290,12 @@ class AISearchPlugin:
                 VectorizedQuery(
                     vector=query_vector,
                     k_nearest_neighbors=top_k * 2,  # Get more for reranking
-                    fields="contentVector"
+                    fields="content_vector"
                 ),
                 VectorizedQuery(
                     vector=query_vector,
                     k_nearest_neighbors=top_k,
-                    fields="summaryVector"
+                    fields="summary_vector"
                 )
             ]
             
@@ -315,7 +304,7 @@ class AISearchPlugin:
                 vector_queries=vector_queries,
                 filter=filter_expression,
                 query_type=QueryType.SEMANTIC,
-                semantic_configuration_name="document-semantic-config",
+                semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
                 query_answer=QueryAnswerType.EXTRACTIVE,
                 top=top_k,
@@ -328,7 +317,7 @@ class AISearchPlugin:
                 search_text=query,
                 filter=filter_expression,
                 query_type=QueryType.SEMANTIC,
-                semantic_configuration_name="document-semantic-config",
+                semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
                 query_answer=QueryAnswerType.EXTRACTIVE,
                 top=top_k,
@@ -341,7 +330,7 @@ class AISearchPlugin:
                 VectorizedQuery(
                     vector=query_vector,
                     k_nearest_neighbors=top_k,
-                    fields="contentVector"
+                    fields="content_vector"
                 )
             ]
             
@@ -367,7 +356,7 @@ class AISearchPlugin:
     
     def _get_select_fields(self, include_content: bool) -> str:
         """Get select fields for search query."""
-        base_fields = "docId,docName,fileName,summary,documentType,industry,company,reportYear,author,pageCount,uploadDate,keywords,documentTags,topics,targetAudience"
+        base_fields = "docId,title,file_name,summary,document_type,industry,company,report_year,page_number,upload_date,keywords"
         
         if include_content:
             return base_fields + ",content"

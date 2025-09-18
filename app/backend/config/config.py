@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     AZURE_AI_SEARCH_ENDPOINT: str = None
     AZURE_AI_SEARCH_API_KEY: str = None
     AZURE_AI_SEARCH_INDEX_NAME: str = None
-    
+
+    # Document Intelligence Settings
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT: str = None
+    AZURE_DOCUMENT_INTELLIGENCE_API_KEY: str = None
+
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=True,
