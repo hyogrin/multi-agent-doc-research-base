@@ -50,7 +50,7 @@ class SemanticAwareTextSplitter:
         
         # Semantic separators prioritized by meaning preservation
         self.semantic_separators = [
-            # Document structure markers (더 robust하게 수정)
+            # Document structure markers
             "\n\n# ",      # Major sections (H1)
             "\n\n## ",     # Sub-sections (H2)
             "\n\n### ",    # Sub-sub-sections (H3)
