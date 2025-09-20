@@ -36,7 +36,7 @@ class FileUploadTest:
     def __init__(self):
         self.upload_plugin = UnifiedFileUploadPlugin()
         self.search_plugin = AISearchPlugin()
-        self.test_files_dir = Path(__file__).parent.parent / "ai_search"
+        self.test_files_dir = Path(__file__).parent / "test_files"
         
     def get_test_files(self):
         """Get available PDF files for testing."""
@@ -49,7 +49,7 @@ class FileUploadTest:
     
     async def test_file_upload(self, file_paths, **kwargs):
         """Test file upload process."""
-        result = await self.upload_plugin.upload_files(
+        result = await self.upload_plugin.upload_documents(
             file_paths=json.dumps(file_paths),
             **kwargs
         )
@@ -58,14 +58,14 @@ class FileUploadTest:
     async def test_file_status(self, file_names):
         """Test file status checking."""
         file_names_str = ", ".join([Path(f).name for f in file_names])
-        result = await self.upload_plugin.check_files_status(file_names_str)
+        result = await self.upload_plugin.check_docs_status(file_names_str)
         return json.loads(result)
     
     async def test_search(self, query, company="Test Company"):
-        """Test document search."""
-        return await self.search_plugin.search_documents(
+        """Test document search (runs sync search in thread to avoid blocking)."""
+        return self.search_plugin.search_documents(
             query=query,
-            search_type="semantic", 
+            search_type="semantic",
             company=company,
             top_k=3,
             include_content=True
@@ -99,7 +99,8 @@ async def test_upload_workflow(test_client, sample_files):
         [test_file],
         document_type="TEST_DOC",
         company="Test Corp",
-        force_upload="true"
+        force_upload="true",
+        is_debug=True
     )
     assert upload_result["status"] == "completed"
     
@@ -142,13 +143,13 @@ async def run_manual_test():
         force_upload="true"
     )
     print(f"   Result: {upload_result['status']}")
-    print(f"   Successful: {upload_result['successful_uploads']}")
+    print(f"   Successful: {upload_result.get('successful_uploads', 0)}")
     
     # Test file status
     print("\n3. Testing file status...")
     status_result = await client.test_file_status([test_file])
     print(f"   Result: {status_result['status']}")
-    print(f"   Existing: {len(status_result['existing_files'])}")
+    print(f"   Files: {status_result.get('files', [])}")
     
     # Test search
     print("\n4. Testing document search...")

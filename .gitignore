@@ -187,3 +187,4 @@ app/frontend/.gradio/certificate.pem
 infra/backend-env.json
 infra/main.parameters.json
 
+app/backend/tests/debug_chunks/*

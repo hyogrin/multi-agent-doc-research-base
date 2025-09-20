@@ -38,8 +38,8 @@ class SemanticAwareTextSplitter:
     """
     
     def __init__(self, 
-                 target_tokens: int = 500,
-                 token_variance: int = 100,
+                 target_tokens: int = 2000,
+                 token_variance: int = 200,
                  overlap_percentage: float = 0.1,
                  model_name: str = "gpt-4"):
         self.target_tokens = target_tokens
@@ -95,6 +95,150 @@ class SemanticAwareTextSplitter:
             " ",           # Word boundaries
         ]
     
+    def split_text_with_document_intelligence(self, result) -> List[str]:
+        """
+        Document Intelligence 결과를 마크다운 헤더(#, ##, ###) 기준으로 큰 단위 섹션별로 분할
+        """
+        content = result.content if result.content else ""
+        
+        if not content:
+            logger.warning("No content found in Document Intelligence result")
+            return []
+        
+        # 마크다운 헤더로 섹션 분할
+        chunks = self._split_by_markdown_headers(content)
+        
+        logger.info(f"Created {len(chunks)} chunks based on markdown headers")
+        return chunks
+
+    def _split_by_markdown_headers(self, content: str) -> List[str]:
+        """
+        마크다운 헤더(#, ##) 기준으로 스마트 섹션 분할
+        - H1(#) 하위에 H2(##)가 2개 이상 있으면 각 H2를 별도 청크로 분할 (H1 제목 포함)
+        - H1 하위에 H2가 1개뿐이면 하나의 청크로 유지
+        - 토큰 수 제한도 고려
+        """
+        if not content:
+            return []
+        
+        lines = content.split('\n')
+        sections = []
+        current_section = []
+        current_h1 = None
+        
+        # 1단계: 라인별로 구조 파악
+        for line in lines:
+            stripped_line = line.strip()
+            
+            if re.match(r'^#\s+', stripped_line):  # H1 헤더
+                # 이전 섹션 저장
+                if current_section:
+                    sections.append({
+                        'h1': current_h1,
+                        'content': current_section
+                    })
+                
+                # 새로운 H1 섹션 시작
+                current_h1 = line
+                current_section = [line]
+                
+            elif re.match(r'^##\s+', stripped_line):  # H2 헤더
+                if current_h1:  # H1이 있는 경우에만
+                    current_section.append(line)
+                else:
+                    # H1 없이 H2가 나온 경우 (독립적인 섹션으로 처리)
+                    if current_section:
+                        sections.append({
+                            'h1': None,
+                            'content': current_section
+                        })
+                    current_section = [line]
+            else:
+                # 일반 컨텐츠 라인
+                current_section.append(line)
+        
+        # 마지막 섹션 저장
+        if current_section:
+            sections.append({
+                'h1': current_h1,
+                'content': current_section
+            })
+        
+        # 2단계: 각 섹션을 스마트하게 청크로 분할
+        chunks = []
+        
+        for section in sections:
+            h1_header = section['h1']
+            content_lines = section['content']
+            
+            if not h1_header:
+                # H1이 없는 경우 (독립 섹션)
+                chunk_text = '\n'.join(content_lines).strip()
+                if chunk_text:
+                    chunks.append(chunk_text)
+                continue
+            
+            # H1이 있는 경우 - H2 서브섹션 확인
+            h2_positions = []
+            for i, line in enumerate(content_lines):
+                if re.match(r'^##\s+', line.strip()):
+                    h2_positions.append(i)
+            
+            if len(h2_positions) <= 1:
+                # H2가 1개 이하인 경우 - 전체를 하나의 청크로
+                chunk_text = '\n'.join(content_lines).strip()
+                if chunk_text:
+                    # 토큰 수 체크
+                    try:
+                        token_count = get_token_numbers(chunk_text, "gpt-4")
+                        if token_count <= self.max_tokens:
+                            chunks.append(chunk_text)
+                        else:
+                            # 토큰이 너무 많으면 H2별로 강제 분할
+                            if h2_positions:
+                                sub_chunks = self._split_h1_section_by_h2(h1_header, content_lines, h2_positions)
+                                chunks.extend(sub_chunks)
+                            else:
+                                chunks.append(chunk_text)  # H2가 없으면 그대로 추가
+                    except:
+                        chunks.append(chunk_text)  # 토큰 계산 실패 시 그대로 추가
+            else:
+                # H2가 2개 이상인 경우 - H2별로 분할 (H1 제목 포함)
+                sub_chunks = self._split_h1_section_by_h2(h1_header, content_lines, h2_positions)
+                chunks.extend(sub_chunks)
+        
+        # 빈 청크 제거
+        final_chunks = [chunk for chunk in chunks if chunk.strip()]
+        
+        if not final_chunks and content.strip():
+            logger.info("No markdown headers found, treating entire content as one chunk")
+            final_chunks = [content.strip()]
+        
+        logger.info(f"Split content into {len(final_chunks)} smart header-based chunks")
+        return final_chunks
+
+    def _split_h1_section_by_h2(self, h1_header: str, content_lines: List[str], h2_positions: List[int]) -> List[str]:
+        """
+        H1 섹션을 H2별로 분할하되, 각 H2 청크에 H1 제목을 포함
+        """
+        chunks = []
+        
+        for i, h2_pos in enumerate(h2_positions):
+            # 다음 H2 위치 또는 끝까지
+            next_h2_pos = h2_positions[i + 1] if i + 1 < len(h2_positions) else len(content_lines)
+            
+            # H2 섹션 내용 추출
+            h2_section_lines = content_lines[h2_pos:next_h2_pos]
+            
+            # H1 + H2 섹션 조합
+            chunk_lines = [h1_header] + h2_section_lines
+            chunk_text = '\n'.join(chunk_lines).strip()
+            
+            if chunk_text:
+                chunks.append(chunk_text)
+        
+        return chunks
+    
     def split_text_with_semantic_awareness(self, text: str) -> List[str]:
         """
         Split text into semantically meaningful chunks with target token count.
@@ -138,17 +282,129 @@ class SemanticAwareTextSplitter:
             return self._fallback_chunking(text)
     
     def _clean_text(self, text: str) -> str:
-        """Clean and normalize text from Document Intelligence."""
-        # Remove excessive whitespace
-        text = re.sub(r'\n{4,}', '\n\n\n', text)  # Limit consecutive newlines
-        text = re.sub(r' {3,}', '  ', text)       # Limit consecutive spaces
+        """
+        Clean and normalize text from Document Intelligence.
+        Enhanced for better text matching during page number detection.
+        """
+        if not text:
+            return ""
         
-        # Normalize markdown-like patterns that might come from Document Intelligence
-        text = re.sub(r'\*{3,}', '***', text)    # Normalize asterisks
-        text = re.sub(r'-{4,}', '---', text)     # Normalize dashes
-        text = re.sub(r'_{4,}', '___', text)     # Normalize underscores
+        # 1. 기본 공백 정규화
+        text = re.sub(r'\n{4,}', '\n\n\n', text)  # 연속된 줄바꿈 제한
+        text = re.sub(r' {3,}', '  ', text)       # 연속된 공백 제한
+        text = re.sub(r'\t+', ' ', text)          # 탭을 공백으로 변환
+    
+        # 2. 마크다운 패턴 정규화 (Document Intelligence 출력 특성 반영)
+        text = re.sub(r'\*{3,}', '***', text)     # 연속된 asterisk 정규화
+        text = re.sub(r'-{4,}', '---', text)      # 연속된 dash 정규화  
+        text = re.sub(r'_{4,}', '___', text)      # 연속된 underscore 정규화
+    
+        # 3. 마크다운 헤더 정규화 (페이지 번호 검색을 위해 중요)
+        # 헤더 앞뒤 공백 정규화
+        text = re.sub(r'\n\s*#+\s*', '\n# ', text)      # H1 헤더 정규화
+        text = re.sub(r'\n\s*##\s*', '\n## ', text)     # H2 헤더 정규화  
+        text = re.sub(r'\n\s*###\s*', '\n### ', text)   # H3 헤더 정규화
+        text = re.sub(r'\n\s*####\s*', '\n#### ', text) # H4 헤더 정규화
+    
+        # 4. 특수 문자 및 인코딩 문제 정규화
+        text = re.sub(r'[^\x00-\x7F]+', ' ', text)      # 비ASCII 문자를 공백으로 (선택적)
+        text = re.sub(r'[""''„]', '"', text)          # 다양한 따옴표를 표준 따옴표로
+        text = re.sub(r'[–—]', '-', text)               # 다양한 대시를 표준 하이픈으로
+        text = re.sub(r'…', '...', text)                # 말줄임표 정규화
+    
+        # 5. 리스트 패턴 정규화
+        text = re.sub(r'\n\s*[•·▪▫‣⁃]\s*', '\n- ', text)  # 다양한 불릿을 표준 하이픈으로
+        text = re.sub(r'\n\s*\d+\.\s*', lambda m: f'\n{m.group().strip()} ', text)  # 번호 리스트 정규화
+    
+        # 6. 표와 구조화된 데이터 정규화
+        text = re.sub(r'\|\s*\|', '| |', text)          # 빈 테이블 셀 정규화
+        text = re.sub(r'\|\s+', '| ', text)             # 테이블 구분자 후 공백 정규화
+        text = re.sub(r'\s+\|', ' |', text)             # 테이블 구분자 앞 공백 정규화
+    
+        # 7. 문장 경계 정규화 (검색 향상을 위해)
+        text = re.sub(r'([.!?])\s*\n\s*([A-Z])', r'\1 \2', text)  # 문장 끝과 다음 문장 시작 정규화
+        text = re.sub(r'([.!?])\s{2,}', r'\1 ', text)             # 문장 끝 후 과도한 공백 제거
+    
+        # 8. 최종 정리
+        text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)   # 과도한 줄바꿈 정리
+        text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)  # 줄 끝 공백 제거
+        text = re.sub(r'^[ \t]+', '', text, flags=re.MULTILINE)  # 줄 시작 공백 제거 (헤더 제외)
+    
+        # 9. 검색용 텍스트 정규화 함수들을 위한 기본 처리
+        # (나중에 _get_chunk_page_number에서 사용할 정규화된 텍스트)
+        normalized_text = text.strip()
+    
+        # 10. 로깅 (디버깅용)
+        if len(text) != len(normalized_text):
+            logger.debug(f"Text normalization: {len(text)} -> {len(normalized_text)} characters")
+    
+        return normalized_text
+    
+    def _normalize_text_for_search(self, text: str) -> str:
+        """
+        텍스트를 검색에 최적화된 형태로 정규화
+        페이지 번호 검색 시 매칭 성공률 향상을 위해 사용
+        """
+        if not text:
+            return ""
         
-        return text.strip()
+        # 1. 기본 정규화
+        normalized = text.lower().strip()
+        
+        # 2. 마크다운 헤더 제거 (검색 시 방해가 될 수 있음)
+        normalized = re.sub(r'^#+\s*', '', normalized, flags=re.MULTILINE)
+        
+        # 3. 특수문자와 구두점 정규화
+        normalized = re.sub(r'[^\w\s가-힣]', ' ', normalized)  # 영문, 숫자, 한글, 공백만 유지
+        
+        # 4. 공백 정규화
+        normalized = re.sub(r'\s+', ' ', normalized)
+        
+        # 5. 앞뒤 공백 제거
+        normalized = normalized.strip()
+        
+        return normalized
+    
+    def _extract_search_keywords(self, text: str, max_keywords: int = 5) -> List[str]:
+        """
+        텍스트에서 검색에 유용한 키워드들을 추출
+        페이지 번호 검색 시 fallback으로 사용
+        """
+        if not text:
+            return []
+        
+        # 정규화된 텍스트에서 키워드 추출
+        normalized = self._normalize_text_for_search(text)
+        words = normalized.split()
+        
+        # 1. 의미있는 단어들 필터링 (길이 3 이상)
+        meaningful_words = [word for word in words if len(word) >= 3]
+        
+        # 2. 일반적인 불용어 제거 (한영 혼합)
+        stopwords = {
+            'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'who', 'boy', 'did', 'she', 'use', 'way', 'will', 'yet',
+            '이', '그', '저', '것', '수', '등', '및', '또는', '하지만', '그러나', '따라서', '그리고', '있다', '없다', '이며', '에서', '으로', '에게', '에서도', '또한'
+        }
+        
+        filtered_words = [word for word in meaningful_words if word not in stopwords]
+        
+        # 3. 빈도순으로 정렬하되, 첫 번째 등장하는 순서도 고려
+        word_positions = {word: idx for idx, word in enumerate(filtered_words)}
+        word_counts = {}
+        for word in filtered_words:
+            word_counts[word] = word_counts.get(word, 0) + 1
+    
+        # 4. 빈도와 위치를 종합하여 점수 계산
+        word_scores = {}
+        for word, count in word_counts.items():
+            position_score = 1.0 / (word_positions[word] + 1)  # 앞쪽에 나올수록 높은 점수
+            frequency_score = count
+            word_scores[word] = frequency_score + position_score
+    
+        # 5. 점수순으로 정렬하여 상위 키워드 반환
+        sorted_keywords = sorted(word_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        return [keyword for keyword, _ in sorted_keywords[:max_keywords]]
     
     def _identify_semantic_sections(self, text: str) -> List[str]:
         """
@@ -340,27 +596,7 @@ class SemanticAwareTextSplitter:
         
         return chunks
     
-    def _fallback_chunking(self, text: str) -> List[str]:
-        """
-        Fallback chunking method using langchain's RecursiveCharacterTextSplitter.
-        """
-        try:
-            logger.info("Using fallback chunking with RecursiveCharacterTextSplitter")
-            
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=self.target_tokens * 4,  # Approximate character count
-                chunk_overlap=int(self.target_tokens * 4 * self.overlap_percentage),
-                length_function=len,
-                separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""]
-            )
-            
-            chunks = splitter.split_text(text)
-            return [chunk.strip() for chunk in chunks if chunk and chunk.strip() and len(chunk.strip()) > 10]
-            
-        except Exception as e:
-            logger.error(f"Error in fallback chunking: {e}")
-            # Final fallback: simple character-based split
-            return self._character_split(text)
+    
     
     def _apply_overlap(self, chunks: List[str]) -> List[str]:
         """
@@ -654,7 +890,8 @@ class UnifiedFileUploadPlugin:
         company: str,
         industry: str,
         report_year: str,
-        result
+        result,
+        is_debug: bool = False
     ) -> List[Dict]:
         """Process PDF using semantic-aware chunking."""
         try:
@@ -671,18 +908,31 @@ class UnifiedFileUploadPlugin:
             
             documents = []
             
-            # Use semantic-aware chunking
-            logger.info("Starting semantic-aware chunking...")
-            semantic_chunks = self.semantic_splitter.split_text_with_semantic_awareness(content)
+            # Use markdown header-based chunking (simple and effective)
+            logger.info("Starting markdown header-based chunking...")
+            semantic_chunks = self.semantic_splitter.split_text_with_document_intelligence(result)
             
-            logger.info(f"Created {len(semantic_chunks)} semantic chunks")
+            logger.info(f"Created {len(semantic_chunks)} header-based chunks")
             
-            # Process each semantic chunk
+            # Process each chunk
             for chunk_num, chunk_text in enumerate(semantic_chunks, 1):
                 chunk_text = chunk_text.strip()
-                if len(chunk_text) < 50:  # Skip very short chunks
-                    continue
-                
+
+                if is_debug:
+                    # Debug: Save chunk text to file for analysis
+                    debug_dir = Path("debug_chunks")
+                    debug_dir.mkdir(exist_ok=True)
+                    debug_file = debug_dir / f"{file_hash}_header_chunk_{chunk_num}.txt"
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(f"=== CHUNK {chunk_num} DEBUG INFO ===\n")
+                        f.write(f"File: {original_filename}\n")
+                        f.write(f"Chunk Number: {chunk_num}\n")
+                        f.write(f"Text Length: {len(chunk_text)}\n")
+                        f.write(f"Processing Method: markdown_header_based\n")
+                        f.write("=" * 50 + "\n\n")
+                        f.write(chunk_text)
+                    logger.info(f"Debug: Saved chunk {chunk_num} to {debug_file}")
+
                 try:
                     # Count tokens for this chunk
                     chunk_tokens = get_token_numbers(chunk_text, "gpt-4")
@@ -693,9 +943,8 @@ class UnifiedFileUploadPlugin:
                     # Create document object for vector storage
                     doc_id = f"{file_hash}_semantic_{chunk_num}"
                     
-                    # Determine page number (rough estimate based on content position)
-                    content_position = content.find(chunk_text[:100])  # Find chunk in original content
-                    estimated_page = min(max(1, int((content_position / len(content)) * page_count)), page_count)
+                    # Determine page number using Document Intelligence paragraph information
+                    page_number = self._get_chunk_page_number(chunk_text, result)
                     
                     document = {
                         "docId": doc_id,
@@ -704,7 +953,7 @@ class UnifiedFileUploadPlugin:
                         "title": f"{file_name} - Section {chunk_num}",
                         "file_name": file_name,
                         "file_hash": file_hash,
-                        "page_number": estimated_page,
+                        "page_number": page_number,
                         "paragraph_number": chunk_num,
                         "chunk_number": chunk_num,
                         "document_type": document_type,
@@ -714,18 +963,18 @@ class UnifiedFileUploadPlugin:
                         "source": file_path,
                         "metadata": json.dumps({
                             "total_pages": page_count,
-                            "total_semantic_chunks": len(semantic_chunks),
+                            "total_chunks": len(semantic_chunks),
                             "chunk_tokens": chunk_tokens,
                             "chunk_length": len(chunk_text),
                             "file_size": Path(file_path).stat().st_size,
-                            "processing_method": "semantic_aware_chunking",
-                            "target_tokens": 400,
-                            "overlap_percentage": 10
+                            "processing_method": "markdown_header_based_chunking",
+                            "min_chunk_size": 100,
+                            "header_based_splitting": True
                         })
                     }
                     
                     documents.append(document)
-                    logger.info(f"Processed semantic chunk {chunk_num}: {chunk_tokens} tokens, {len(chunk_text)} characters")
+                    logger.info(f"Processed header-based chunk {chunk_num}: {chunk_tokens} tokens, {len(chunk_text)} characters")
                 
                 except Exception as e:
                     logger.error(f"Error processing semantic chunk {chunk_num}: {e}")
@@ -745,7 +994,8 @@ class UnifiedFileUploadPlugin:
         company: str,
         industry: str,
         report_year: str,
-        result
+        result,
+        is_debug: bool = False
     ) -> List[Dict]:
         """Process PDF using page-based chunking."""
         try:
@@ -767,9 +1017,22 @@ class UnifiedFileUploadPlugin:
             # Process each page chunk
             for chunk_num, page_chunk in enumerate(page_chunks, 1):
                 chunk_text = page_chunk["content"].strip()
-                if len(chunk_text) < 50:  # Skip very short chunks
-                    continue
-                
+
+                if is_debug:
+                    # Debug: Save chunk text to file for analysis
+                    debug_dir = Path("debug_chunks")
+                    debug_dir.mkdir(exist_ok=True)
+                    debug_file = debug_dir / f"{file_hash}_header_chunk_{chunk_num}.txt"
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(f"=== CHUNK {chunk_num} DEBUG INFO ===\n")
+                        f.write(f"File: {original_filename}\n")
+                        f.write(f"Chunk Number: {chunk_num}\n")
+                        f.write(f"Text Length: {len(chunk_text)}\n")
+                        f.write(f"Processing Method: markdown_header_based\n")
+                        f.write("=" * 50 + "\n\n")
+                        f.write(chunk_text)
+                    logger.info(f"Debug: Saved chunk {chunk_num} to {debug_file}")
+
                 try:
                     # Generate embedding
                     embedding = await self._get_embedding(chunk_text)
@@ -823,7 +1086,8 @@ class UnifiedFileUploadPlugin:
         document_type: str,
         company: str,
         industry: str,
-        report_year: str
+        report_year: str,
+        is_debug: bool = False
     ) -> List[Dict]:
         """Process PDF file using the configured chunking method."""
         try:
@@ -841,7 +1105,22 @@ class UnifiedFileUploadPlugin:
             result: AnalyzeResult = poller.result()
 
             print(result.content_format) 
-            print(result.content[:3000]) # Print first 2000 characters of result for debugging
+            print(result.content[:3000]) # Print first 3000 characters of result for debugging
+
+            if is_debug:
+                # Save result.content to file for debugging
+                debug_dir = Path("debug_content")
+                debug_dir.mkdir(exist_ok=True)
+                content_file = debug_dir / f"{original_filename}_content.txt"
+                with open(content_file, "w", encoding="utf-8") as f:
+                    f.write(f"=== DOCUMENT INTELLIGENCE CONTENT DEBUG ===\n")
+                    f.write(f"File: {original_filename}\n")
+                    f.write(f"Content Format: {result.content_format}\n")
+                    f.write(f"Content Length: {len(result.content) if result.content else 0}\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(result.content if result.content else "No content extracted")
+                logger.info(f"Debug: Saved content to {content_file}")
+
             page_count = len(result.pages) if result.pages else 0
             
             logger.info(f"Document Intelligence processing complete: {page_count} pages")
@@ -849,17 +1128,17 @@ class UnifiedFileUploadPlugin:
             # Route to appropriate chunking method based on configuration
             if self.processing_method == "semantic":
                 documents = await self._process_pdf_with_semantic_chunking(
-                    file_path, original_filename, document_type, company, industry, report_year, result
+                    file_path, original_filename, document_type, company, industry, report_year, result, is_debug
                 )
             elif self.processing_method == "page":
                 documents = await self._process_pdf_with_page_chunking(
-                    file_path, original_filename, document_type, company, industry, report_year, result
+                    file_path, original_filename, document_type, company, industry, report_year, result, is_debug
                 )
             else:
                 # Fallback to semantic
                 logger.warning(f"Unknown processing method: {self.processing_method}. Using semantic chunking.")
                 documents = await self._process_pdf_with_semantic_chunking(
-                    file_path, original_filename, document_type, company, industry, report_year, result
+                    file_path, original_filename, document_type, company, industry, report_year, result, is_debug
                 )
             
             logger.info(f"Processed {len(documents)} chunks using {self.processing_method} chunking from {page_count} pages")
@@ -965,9 +1244,9 @@ Ready to upload files?""",
     
     @kernel_function(
         description="Upload and process documents for AI Search. Call this when files need to be processed as unstructured document data.",
-        name="upload_files"  # 함수명을 upload_files로 변경 (main.py에서 호출하는 이름과 맞춤)
+        name="upload_documents"  
     )
-    async def upload_files(
+    async def upload_documents(
         self,
         file_paths: str,  # JSON string of file paths
         file_names: str = "",  # JSON string of original filenames 추가
@@ -975,7 +1254,8 @@ Ready to upload files?""",
         company: str = "",
         industry: str = "",
         report_year: str = "",
-        force_upload: str = "false"
+        force_upload: str = "false",
+        is_debug: bool = True
     ) -> str:
         """Upload and process multiple files for document search."""
         try:
@@ -1028,7 +1308,7 @@ Ready to upload files?""",
                 
                     if file_extension == '.pdf':
                         documents = await self._process_pdf_file(
-                            file_path, original_filename, document_type, company, industry, report_year
+                            file_path, original_filename, document_type, company, industry, report_year, is_debug
                         )
                     else:
                         results.append({
@@ -1054,6 +1334,7 @@ Ready to upload files?""",
                                 "status": "error",
                                 "message": "Failed to upload to vector database"
                             })
+                        print(documents[0])
                     else:
                         results.append({
                             "file": original_filename,
@@ -1239,3 +1520,53 @@ Would you like to try again?"""
                 "status": "error",
                 "message": "Error processing upload notification."
             })
+    
+    def _get_chunk_page_number(self, chunk_text: str, result) -> int:
+        """
+        Document Intelligence의 paragraph 정보를 활용해서 청크의 페이지 번호를 찾음
+        """
+        if not result.paragraphs or not chunk_text.strip():
+            return 1
+    
+        # 청크에서 검색할 텍스트 추출 (첫 번째 의미있는 라인)
+        chunk_lines = [line.strip() for line in chunk_text.split('\n') if line.strip()]
+        if not chunk_lines:
+            return 1
+        
+        # 검색 텍스트 준비 (헤더 마크다운 제거)
+        search_text = chunk_lines[0]
+        clean_search = re.sub(r'^#+\s*', '', search_text).strip()
+        
+        # 1단계: 정확한 텍스트 매칭
+        for paragraph in result.paragraphs:
+            if not paragraph.content or not paragraph.bounding_regions:
+                continue
+                
+            # 원본 텍스트 매칭
+            if search_text.lower() in paragraph.content.lower():
+                return paragraph.bounding_regions[0].page_number
+            
+            # 헤더 제거 버전 매칭
+            if clean_search and clean_search.lower() in paragraph.content.lower():
+                return paragraph.bounding_regions[0].page_number
+        
+        # 2단계: 짧은 버전으로 재시도
+        short_text = clean_search[:30] if clean_search else search_text[:30]
+        for paragraph in result.paragraphs:
+            if paragraph.content and paragraph.bounding_regions:
+                if short_text.lower() in paragraph.content.lower():
+                    return paragraph.bounding_regions[0].page_number
+        
+        # 3단계: 첫 번째 단어로 매칭
+        words = clean_search.split() if clean_search else search_text.split()
+        if words and len(words[0]) > 3:
+            first_word = words[0].lower()
+            for paragraph in result.paragraphs:
+                if paragraph.content and paragraph.bounding_regions:
+                    if first_word in paragraph.content.lower():
+                        return paragraph.bounding_regions[0].page_number
+        
+        logger.warning(f"Could not find page number for chunk: {search_text[:50]}...")
+        return 1
+
+
