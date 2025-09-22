@@ -121,22 +121,7 @@ login_page_image = "/public/images/ai_foundry_background.png"
 #dark = "#160d5dff"
 #light = "#FFE7EB"
 
-[files]
-# Enable file upload functionality
-allow_upload = true
 
-# Maximum file size in MB
-max_size_mb = 50
-
-# Maximum number of files per upload
-max_files = 10
-
-# List of accepted file extensions or MIME types
-accept = [
-    ".pdf",
-    ".docx",
-    ".txt"
-]
 
 # Authorize users to spontaneously upload files with messages
 [features.spontaneous_file_upload]

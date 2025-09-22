@@ -169,7 +169,7 @@ async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: flo
             message = status_data.get("message", "")
             progress = int(status_data.get("progress", 0))
             file_results = status_data.get("file_results", [])
-
+            print(file_results)
             if status == "processing":
                 green_blocks = progress // 10
                 progress_bar = "🟩" * green_blocks + "⬜" * (10 - green_blocks)
@@ -181,11 +181,14 @@ async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: flo
                 await msg.update()
             elif status == "completed":
                 success_cnt = len([r for r in file_results if r.get("status") == "success"])
+
                 fail_cnt = len([r for r in file_results if r.get("status") == "error"])
+
+                skip_cnt = len([r for r in file_results if r.get("status") == "skipped"])
                 msg.content = (
                     f"✅ **업로드 완료** (ID: {upload_id[:8]})\n"
                     f"{message}\n\n"
-                    f"📄 성공: {success_cnt} / 실패: {fail_cnt}\n"
+                    f"📄 성공: {success_cnt} / 실패: {fail_cnt} / 기등록: {skip_cnt}\n"
                     f"💡 이제 문서에 대해 질문해보세요!"
                 )
                 await msg.update()
@@ -231,57 +234,57 @@ async def send_example_questions(upload_id: str):
     lower_names = " ".join(files).lower()
     is_finance = any(k in lower_names for k in ["ir", "earnings", "financial", "재무", "실적", "분기", "annual", "report"])
 
-    # 파일 표시 (최대 3개)
-    display_files = files[:3]
-    file_line = ""
-    if display_files:
-        if language.startswith("ko"):
-            file_line = "📂 대상 파일: " + ", ".join(display_files)
-        else:
-            file_line = "📂 Files: " + ", ".join(display_files)
+    # TODO: 필요 시 질문 샘플 제공 
+    # display_files = files[:3]
+    # file_line = ""
+    # if display_files:
+    #     if language.startswith("ko"):
+    #         file_line = "📂 대상 파일: " + ", ".join(display_files)
+    #     else:
+    #         file_line = "📂 Files: " + ", ".join(display_files)
 
-    if language.startswith("ko"):
-        header = "💡 **이 문서로 질문 예시**"
-        if is_finance:
-            examples = [
-                "이 보고서의 핵심 재무 지표를 요약해줘",
-                "전년 대비 변화율이 큰 항목 3가지를 알려줘",
-                "경영진 코멘트(또는 전망) 부분만 뽑아 정리해줘",
-                "매출/영업이익/순이익 추이를 표로 만들어줘",
-                "위험 요인(Risk factor)이나 경고 신호가 있으면 정리해줘"
-            ]
-        else:
-            examples = [
-                "이 문서의 핵심 내용을 5줄로 요약해줘",
-                "가장 중요한 인사이트 3가지만 뽑아줘",
-                "문서에 등장하는 주요 개념/용어를 설명과 함께 정리해줘",
-                "이 문서가 다루는 문제와 제안된 해결책을 정리해줘",
-                "추가로 조사하면 좋을 관련 주제 5가지를 제안해줘"
-            ]
-        follow = "다른 형태의 분석이나 비교가 필요하면 자연어로 자유롭게 질문해주세요."
-    else:
-        header = "💡 **Example Questions for These Documents**"
-        if is_finance:
-            examples = [
-                "Summarize the key financial indicators from this report.",
-                "List top 3 metrics with largest YoY change.",
-                "Extract and summarize management outlook or guidance.",
-                "Create a table of revenue / operating income / net income trends.",
-                "Highlight any risk factors or warning signals mentioned."
-            ]
-        else:
-            examples = [
-                "Summarize the core points in 5 concise bullet lines.",
-                "List the top 3 most important insights with brief rationale.",
-                "Extract key concepts/terms and explain each briefly.",
-                "Summarize the problem addressed and proposed solution.",
-                "Suggest 5 related follow-up research questions."
-            ]
-        follow = "Feel free to ask for any other analysis or comparison you need."
+    # if language.startswith("ko"):
+    #     header = "💡 **이 문서로 질문 예시**"
+    #     if is_finance:
+    #         examples = [
+    #             "이 보고서의 핵심 재무 지표를 요약해줘",
+    #             "전년 대비 변화율이 큰 항목 3가지를 알려줘",
+    #             "경영진 코멘트(또는 전망) 부분만 뽑아 정리해줘",
+    #             "매출/영업이익/순이익 추이를 표로 만들어줘",
+    #             "위험 요인(Risk factor)이나 경고 신호가 있으면 정리해줘"
+    #         ]
+    #     else:
+    #         examples = [
+    #             "이 문서의 핵심 내용을 5줄로 요약해줘",
+    #             "가장 중요한 인사이트 3가지만 뽑아줘",
+    #             "문서에 등장하는 주요 개념/용어를 설명과 함께 정리해줘",
+    #             "이 문서가 다루는 문제와 제안된 해결책을 정리해줘",
+    #             "추가로 조사하면 좋을 관련 주제 5가지를 제안해줘"
+    #         ]
+    #     follow = "다른 형태의 분석이나 비교가 필요하면 자연어로 자유롭게 질문해주세요."
+    # else:
+    #     header = "💡 **Example Questions for These Documents**"
+    #     if is_finance:
+    #         examples = [
+    #             "Summarize the key financial indicators from this report.",
+    #             "List top 3 metrics with largest YoY change.",
+    #             "Extract and summarize management outlook or guidance.",
+    #             "Create a table of revenue / operating income / net income trends.",
+    #             "Highlight any risk factors or warning signals mentioned."
+    #         ]
+    #     else:
+    #         examples = [
+    #             "Summarize the core points in 5 concise bullet lines.",
+    #             "List the top 3 most important insights with brief rationale.",
+    #             "Extract key concepts/terms and explain each briefly.",
+    #             "Summarize the problem addressed and proposed solution.",
+    #             "Suggest 5 related follow-up research questions."
+    #         ]
+    #     follow = "Feel free to ask for any other analysis or comparison you need."
 
-    bullets = "\n".join(f"• {q}" for q in examples)
-    content = f"{header}\n\n{file_line}\n\n{bullets}\n\n{follow}"
-    await cl.Message(content=content).send()
+    # bullets = "\n".join(f"• {q}" for q in examples)
+    # content = f"{header}\n\n{file_line}\n\n{bullets}\n\n{follow}"
+    # await cl.Message(content=content).send()
 
 def start_progress_tracker(upload_id: str, files: List[str], base_message: cl.Message):
     """비동기 폴링 태스크 시작 및 registry 저장"""
@@ -508,14 +511,14 @@ async def chat_profile():
     return [
         cl.ChatProfile(
             name="Korean",
-            markdown_description="## Plan Search Chat",
-            icon="/public/images/ai_foundry_icon_small.png",
+            markdown_description="## Doc Research Chat",
+            icon="/public/images/azure-ai-search.png",
             starters=get_starters_for_language("ko-KR")
         ),
         cl.ChatProfile(
             name="English", 
-            markdown_description="## Plan Search Chat",
-            icon="/public/images/ai_foundry_icon_small.png",
+            markdown_description="## Doc Research Chat",
+            icon="/public/images/azure-ai-search.png",
             starters=get_starters_for_language("en-US")
         ),
         
@@ -630,14 +633,24 @@ async def start():
     
     # Send settings to user
     await cl.ChatSettings(settings_components).send()
-    
-    
-    # Set first message flag
-    cl.user_session.set("first_message", False)
+
+    # Enable file upload UI - this is CRITICAL for settings icon to appear
+    cl.user_session.set("files", {
+        "accept": {
+            "application/pdf": [".pdf"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"], 
+            "text/plain": [".txt"]
+        },
+        "max_size_mb": 50,
+        "max_files": 10
+    })
+
+    # Set is_first flag to use in on_message main
+    cl.user_session.set("is_first", True)
 
     # Display file upload information with clear instructions
     welcome_msg = f"""
-🎉 **Plan Search Chat에 오신 것을 환영합니다!**
+🎉 **Doc Research Chat에 오신 것을 환영합니다!**
 
 📁 **파일 업로드 기능이 활성화되었습니다**
 
@@ -659,7 +672,7 @@ async def start():
 @cl.on_settings_update
 async def setup_agent(settings_dict: Dict[str, Any]):
     """Simplified settings update"""
-    settings = cl.user_session.get("settings", ChatSettings())
+    settings = cl.user_session.get("settings")
     
     # Update settings with simple mapping
     for key, value in settings_dict.items():
@@ -671,8 +684,8 @@ async def setup_agent(settings_dict: Dict[str, Any]):
         search_engine_name = settings_dict["search_engine"]
         settings.search_engine = SEARCH_ENGINES.get(search_engine_name, list(SEARCH_ENGINES.values())[0])
 
-    # Check if user wants to show starters
-    show_starters = settings_dict.get("show_starters", True)
+    # TODO : Check if user wants to show starters
+    show_starters = settings_dict.get("show_starters", False)
     if show_starters:
         # Re-send starters
         current_profile = cl.user_session.get("chat_profile", "English")
@@ -759,293 +772,6 @@ def decode_step_content(content: str) -> tuple[str, str, str]:
     logger.info(f"Decoded result - step_name: {step_name}, code_length: {len(code_content)}, description: {description}")
     
     return step_name, code_content, description
-
-async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
-    """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
-    if not message or message.strip() == "":
-        return
-    
-    # Get conversation history
-    message_history = cl.chat_context.to_openai()
-    
-    # Helper function to clean text content
-    def clean_response_text(text: str) -> str:
-        """Clean response text to prevent unwanted markdown formatting"""
-        # Replace ~~ with == to avoid strikethrough
-        cleaned_text = text.replace("~~", "==")
-        # You can add more replacements here if needed
-        # cleaned_text = cleaned_text.replace("**", "*")  # Convert bold to italic if needed
-        return cleaned_text
-    
-    # Prepare the API payload
-    payload = {
-        "messages": message_history[-10:],
-        "max_tokens": settings.max_tokens,
-        "temperature": settings.temperature,
-        "query_rewrite": settings.query_rewrite,
-        "planning": settings.planning,
-        "include_web_search": settings.web_search,
-        "include_ytb_search": settings.ytb_search,
-        "include_mcp_server": settings.mcp_server,
-        "include_ai_search": settings.ai_search,
-        "search_engine": settings.search_engine,
-        "stream": True,
-        "locale": settings.language,
-        "verbose": settings.verbose,
-    }
-    
-    # Debug logging
-    logger.info(f"API Payload: query_rewrite={settings.query_rewrite}, web_search={settings.web_search}, planning={settings.planning},"
-          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, search_engine={settings.search_engine}, "
-          f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
-          f"language={settings.language}, verbose={settings.verbose}")
-    
-    # Create message for streaming response
-    ui_text = UI_TEXT[settings.language]
-    msg = cl.Message(content="")
-    await msg.send()
-    
-    try:
-        # Set up session with retry capability
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        api_url = SK_API_URL
-        
-        # Create step for API call with detailed information
-        async with cl.Step(name="API Request", type="run") as step:
-            step.input = {
-                "endpoint": api_url,
-                "query_rewrite": settings.query_rewrite,
-                "planning": settings.planning,
-                "web_search": settings.web_search,
-                "ytb_search": settings.ytb_search,
-                "mcp_server": settings.mcp_server,
-                "ai_search": settings.ai_search,
-                "search_engine": settings.search_engine,
-                "verbose": settings.verbose,
-                "locale": settings.language,
-            }
-            
-            # Make request with stream=True
-            response = session.post(
-                api_url,
-                json=payload,
-                timeout=(5, 120),
-                stream=True,
-                headers={"Accept": "text/event-stream"}
-            )
-            
-            step.output = f"Response status: {response.status_code}"
-            
-            logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-            
-            if response.status_code == 200:
-                content_type = response.headers.get('Content-Type', '')
-                
-                if 'text/event-stream' in content_type:
-                    # Process Server-Sent Events (SSE) with tool calling steps
-                    async with cl.Step(name="Processing Response", type="tool") as process_step:
-                        process_step.input = "Processing streaming response..."
-                        
-                        accumulated_content = ""
-                        current_tool_step = None
-                        tool_steps = {}
-                        
-                        logger.info("Starting SSE processing loop...")
-                        for line in response.iter_lines():
-                            if not line:
-                                continue
-                            
-                            # Decode the line
-                            line = line.decode('utf-8')
-                            logger.info(f"SSE line received: {line}")
-                            
-                            # Skip SSE comments and empty lines
-                            if line.startswith(':') or not line.strip():
-                                continue
-                            
-                            # Handle SSE format (data: prefix)
-                            if line.startswith('data: '):
-                                line = line[6:].strip()  # Remove the 'data: ' prefix
-                                
-                                # Status message handling - create tool steps for different operations
-                                if line.startswith('### '):
-                                    step_content = line[4:]
-                                    
-                                    # Complete previous step if exists
-                                    if current_tool_step:
-                                        current_tool_step.output = "✅ Completed"
-                                        await safe_send_step(current_tool_step)
-                                    
-                                    # Decode step content (name, code, description)
-                                    step_name, code_content, description = decode_step_content(step_content)
-                                    
-                                    # Create new step for each tool operation with appropriate types
-                                    step_type = "tool"
-                                    step_icon = "🔧"
-                                    
-                                    # Determine step type and icon based on step name
-                                    step_name_lower = step_name.lower()
-                                    try:
-                                        if ui_text.get("analyzing", "").lower() in step_name_lower:
-                                            step_type = "intent"
-                                            step_icon = "🧠"
-                                        elif ui_text.get("analyze_complete", "").lower() in step_name_lower:
-                                            step_type = "intent"
-                                            step_icon = "🧠"
-                                        elif ui_text.get("search_planning", "").lower() in step_name_lower:
-                                            step_type = "planning"
-                                            step_icon = "📋"
-                                        elif ui_text.get("plan_done", "").lower() in step_name_lower:
-                                            step_type = "planning"
-                                            step_icon = "📋"
-                                        elif ui_text.get("searching", "").lower() in step_name_lower:
-                                            step_type = "retrieval"
-                                            step_icon = "🌐"
-                                        elif ui_text.get("search_done", "").lower() in step_name_lower:
-                                            step_type = "retrieval"
-                                            step_icon = "🌐"                                            
-                                        elif ui_text.get("searching_YouTube", "").lower() in step_name_lower:
-                                            step_type = "retrieval"
-                                            step_icon = "🎬"
-                                        elif ui_text.get("YouTube_done", "").lower() in step_name_lower:
-                                            step_type = "retrieval"
-                                            step_icon = "🎬"                                            
-                                        elif ui_text.get("answering", "").lower() in step_name_lower:
-                                            step_type = "llm"
-                                            step_icon = "✏️"
-                                        elif ui_text.get("search_and_answer", "").lower() in step_name_lower:
-                                            step_type = "llm"
-                                            step_icon = "✏️"
-                                        elif "context information" in step_name_lower:
-                                            step_type = "tool"
-                                            step_icon = "📃"
-                                    except KeyError as e:
-                                        logger.warning(f"Missing UI text key: {e}")
-                                    
-                                    current_tool_step = cl.Step(
-                                        name=f"{step_icon} {step_name}", 
-                                        type=step_type
-                                    )
-                                    
-                                    # Set input based on available content
-                                    if code_content:
-                                        # Display code with syntax highlighting
-                                        current_tool_step.input = f"```python\n{code_content}\n```"
-                                    elif description:
-                                        # Display description
-                                        current_tool_step.input = description
-                                    else:
-                                        # Default message
-                                        current_tool_step.input = f"Executing: {step_name}"
-                                    
-                                    if not await safe_send_step(current_tool_step):
-                                        logger.warning(f"Failed to send tool step: {step_name}")
-                                        break  # Exit if connection is lost
-                                    
-                                    # Store step for later reference
-                                    tool_steps[step_name] = current_tool_step
-                            else:
-                                # Regular content - clean and accumulate and stream
-                                cleaned_line = clean_response_text(line)  # Clean the line before processing
-                                
-                                if accumulated_content:
-                                    # Apply formatting rules for line breaks
-                                    if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
-                                        accumulated_content += "\n\n" + cleaned_line
-                                    else:
-                                        accumulated_content += "\n" + cleaned_line
-                                else:
-                                    accumulated_content = cleaned_line
-                                
-                                # Stream update to UI safely with cleaned content
-                                if not await safe_stream_token(msg, cleaned_line + "\n"):
-                                    logger.warning("Stream connection lost, stopping streaming")
-                                    break  # Exit if connection is lost
-                        
-                        # Close any remaining tool step
-                        if current_tool_step:
-                            current_tool_step.output = "✅ Completed"
-                            await safe_send_step(current_tool_step)
-                        
-                        process_step.output = f"✅ Processed {len(accumulated_content)} characters across {len(tool_steps)} tool steps"
-                
-                else:
-                    # Handle regular non-streaming response
-                    async with cl.Step(name="Processing Non-Streaming Response", type="tool") as process_step:
-                        logger.info("Not a chunked response, trying to process as regular response")
-                        try:
-                            chunks = []
-                            for chunk in response.iter_content(chunk_size=None):
-                                if chunk:
-                                    chunks.append(chunk)
-                            
-                            if chunks:
-                                response_text = b''.join(chunks).decode('utf-8', errors='replace')
-                                cleaned_response = clean_response_text(response_text) # Clean the response
-                                
-                                # Try to parse as JSON first
-                                try:
-                                    response_data = json.loads(response_text)
-                                    if isinstance(response_data, dict) and "content" in response_data:
-                                        cleaned_content = clean_response_text(response_data["content"])
-                                        await safe_stream_token(msg, cleaned_content)
-                                        process_step.output = f"✅ Parsed JSON response with content: {cleaned_content[:50]}..."
-                                    else:
-                                        await safe_stream_token(msg, cleaned_response)
-                                        process_step.output = "✅ JSON response without content field, using raw text"
-                                except json.JSONDecodeError:
-                                    # Not valid JSON, just use as text
-                                    await safe_stream_token(msg, cleaned_response)
-                                    process_step.output = "✅ Not a valid JSON response, using raw text"
-                            else:
-                                error_msg = "No response received from server."
-                                await safe_stream_token(msg, error_msg)
-                                process_step.output = error_msg
-                        
-                        except Exception as e:
-                            error_msg = f"Error processing response: {str(e)}"
-                            await safe_stream_token(msg, error_msg)
-                            process_step.output = error_msg
-            else:
-                error_msg = f"Error: {response.status_code} - {response.text}"
-                await safe_stream_token(msg, error_msg)
-                step.output = error_msg
-    
-    except requests.exceptions.Timeout:
-        error_msg = "Error: Request timed out. The server took too long to respond."
-        await safe_stream_token(msg, error_msg)
-        logger.error("Request timed out")
-    except requests.exceptions.ConnectionError:
-        error_msg = "Error: Connection failed. Please check if the API server is running."
-        await safe_stream_token(msg, error_msg)
-        logger.error("Connection error")
-    except requests.exceptions.ChunkedEncodingError:
-        error_msg = "Error: Connection interrupted while receiving data from the server."
-        await safe_stream_token(msg, error_msg)
-        logger.error("Chunked encoding error - connection interrupted")
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Error connecting to the API: {str(e)}"
-        await safe_stream_token(msg, error_msg)
-        logger.error(f"Request exception: {type(e).__name__}: {str(e)}")
-    except json.JSONDecodeError as e:
-        error_msg = "Error: Received invalid JSON from the server."
-        await safe_stream_token(msg, error_msg)
-        logger.error(f"JSON decode error: {e}")
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        await safe_stream_token(msg, error_msg)
-        logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-    
-    # Finalize the message safely
-    await safe_update_message(msg)
-    logger.info("Streaming completed")
-
 
 def clean_response_text(text: str) -> str:
     """Clean response text to prevent unwanted markdown formatting"""
@@ -1414,7 +1140,7 @@ async def on_help_action(action: cl.Action):
 📖 **도움말**
 
 🔹 **파일 업로드 방법:**
-1️⃣ 채팅 입력창 하단의 📎 버튼 클릭 (있는 경우)
+1️⃣ 채팅 입력창 하단의 📎 버튼 클릭
 2️⃣ "파일업로드" 명령어 입력
 3️⃣ 위의 "📎 파일 업로드" 버튼 클릭
 
@@ -1425,8 +1151,6 @@ async def on_help_action(action: cl.Action):
 - 파일 업로드 후 관련 질문을 입력하세요
 - 예: "이 문서의 주요 내용을 요약해주세요"
 
-❓ **문제 해결:**
-- 📎 버튼이 보이지 않으면 브라우저를 새로고침하거나 "파일업로드" 명령어를 사용하세요
 """
     
     await cl.Message(content=help_message).send()
