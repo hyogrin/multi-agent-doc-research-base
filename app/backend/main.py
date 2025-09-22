@@ -98,7 +98,7 @@ async def process_uploaded_files_background(
         for temp_path, original_name in zip(file_paths, file_names):
             file_mapping[temp_path] = original_name
         
-        result = await upload_plugin.upload_files(
+        result = await upload_plugin.upload_documents(
             file_paths=json.dumps(file_paths),
             file_names=json.dumps(file_names),  # 실제 파일명도 전달
             document_type=document_type,

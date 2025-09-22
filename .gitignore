@@ -188,3 +188,4 @@ infra/backend-env.json
 infra/main.parameters.json
 
 app/backend/tests/debug_chunks/*
+app/frontend/.files/*

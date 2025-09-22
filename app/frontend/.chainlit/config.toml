@@ -133,16 +133,31 @@ max_files = 10
 
 # List of accepted file extensions or MIME types
 accept = [
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
-    "text/plain",
     ".pdf",
-    ".docx", 
+    ".docx",
     ".txt"
 ]
 
-# Ask the user before uploading a file
-ask_user = false
+# Authorize users to spontaneously upload files with messages
+[features.spontaneous_file_upload]
+    enabled = true
+    # Define accepted file types using MIME types
+    # Examples:
+    # 1. For specific file types:
+    accept = [
+    "application/pdf",
+    "application/docx",
+    "application/txt"
+]
+    # 2. For all files of certain type:
+    #    accept = ["image/*", "audio/*", "video/*"]
+    # 3. For specific file extensions:
+    #    accept = { "application/octet-stream" = [".xyz", ".pdb"] }
+    # Note: Using "*/*" is not recommended as it may cause browser warnings
+    # accept = ["*/*"]
+    max_files = 2
+    max_size_mb = 10
+
 
 [meta]
 generated_by = "1.0.0"

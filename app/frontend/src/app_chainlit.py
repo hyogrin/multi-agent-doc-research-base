@@ -21,7 +21,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# @cl.password_auth_callback
+#@cl.password_auth_callback
 def auth_callback(username: str, password: str):
     """Simple password authentication - fixed version"""
     try:
@@ -140,12 +140,13 @@ def get_starters_for_language(language: str):
             )
             starters.append(starter)
             logger.info(f"Added starter: {category} - {starter.label}")
+    return starters  # ensure starters list is returned
 
 async def check_upload_status_once(upload_id: str) -> dict | None:
     """단발성 업로드 상태 조회 (폴링 루프 내부/액션 버튼에서 호출)"""
     try:
         session = requests.Session()
-        resp = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=15)
+        resp = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=(10, 30))
         if not resp.ok:
             return None
         return resp.json()
@@ -153,7 +154,7 @@ async def check_upload_status_once(upload_id: str) -> dict | None:
         logger.warning(f"[upload:{upload_id}] 상태 조회 실패: {e}")
         return None
 
-async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: float = 2.0):
+async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: float = 3.0):
     """주기적으로 상태를 폴링해서 동일 메시지를 갱신"""
     try:
         while True:
@@ -353,27 +354,36 @@ async def check_upload_status(upload_id: str, status_message: cl.Message = None)
     
     return None
 
-async def upload_files_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
-    """Upload attached files to backend with status tracking"""
+async def handle_file_upload(files, settings=None, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
+    """Unified file upload handler for all file types"""
     try:
         # Initial upload message
         status_message = cl.Message(content="📤 **파일 업로드 중...**\n\n파일을 서버에 업로드하고 있습니다...")
         await status_message.send()
         
+        # Process and validate files
+        files_payload, valid_files = [], []
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+        allowed_extensions = {'.pdf', '.docx', '.txt'}
+        
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(max_retries=3)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
-
-        files_payload = []
-        valid_files = []
         
-        # File validation and size limits
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-        allowed_extensions = {'.pdf', '.docx', '.txt'}
-        
-        for att in attachments:
-            filename = getattr(att, "name", None) or getattr(att, "filename", None) or (att.get("name") if isinstance(att, dict) else None) or "file"
+        for att in files:
+            # Get filename - handle Chainlit file objects properly
+            filename = None
+            if hasattr(att, 'name'):
+                filename = att.name
+            elif hasattr(att, 'filename'):
+                filename = att.filename
+            elif isinstance(att, dict) and 'name' in att:
+                filename = att['name']
+            else:
+                filename = "unknown_file"
+            
+            logger.info(f"Processing file: {filename}")
             
             # Check file extension
             file_ext = os.path.splitext(filename)[1].lower()
@@ -384,10 +394,18 @@ async def upload_files_to_backend(attachments, settings, document_type: str = "I
             file_bytes = None
             content_type = "application/octet-stream"
 
-            # Get file content
-            if hasattr(att, "content"):
+            # Get file content - handle Chainlit file objects properly
+            if hasattr(att, "content") and att.content:
                 file_bytes = att.content
-                content_type = getattr(att, "content_type", content_type)
+                content_type = getattr(att, "mime", getattr(att, "content_type", content_type))
+            elif hasattr(att, "path") and att.path:
+                # Read from file path
+                try:
+                    with open(att.path, "rb") as f:
+                        file_bytes = f.read()
+                except Exception as e:
+                    await cl.Message(content=f"❌ **파일 읽기 실패**: {filename} - {e}").send()
+                    continue
             elif isinstance(att, dict) and ("content" in att or "data" in att):
                 b64 = att.get("content") or att.get("data")
                 try:
@@ -406,7 +424,13 @@ async def upload_files_to_backend(attachments, settings, document_type: str = "I
                     await cl.Message(content=f"❌ **파일 다운로드 실패**: {filename} - {e}").send()
                     continue
             else:
-                await cl.Message(content=f"❌ **지원하지 않는 첨부파일 형식**: {filename}").send()
+                logger.warning(f"Cannot process file: {filename} - unsupported format")
+                await cl.Message(content=f"❌ **파일 처리 불가**: {filename} - 지원하지 않는 형식").send()
+                continue
+
+            # Check if we got file content
+            if not file_bytes:
+                await cl.Message(content=f"❌ **파일 내용 없음**: {filename}").send()
                 continue
 
             # Check file size
@@ -414,17 +438,21 @@ async def upload_files_to_backend(attachments, settings, document_type: str = "I
                 await cl.Message(content=f"❌ **파일 크기 초과**: {filename}\n\n최대 크기: 50MB").send()
                 continue
 
+            # Add to upload payload
             files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
             valid_files.append(filename)
+            logger.info(f"Added file to upload: {filename} ({len(file_bytes)} bytes)")
 
         if not files_payload:
-            await cl.Message(content="❌ **업로드할 유효한 파일이 없습니다.**").send()
-            return
+            status_message.content = "❌ **업로드할 유효한 파일이 없습니다.**"
+            await status_message.update()
+            return False
 
         # Check file count limit
         if len(files_payload) > 10:
-            await cl.Message(content="❌ **파일 개수 초과**: 최대 10개 파일만 업로드 가능합니다.").send()
-            return
+            status_message.content = "❌ **파일 개수 초과**: 최대 10개 파일만 업로드 가능합니다."
+            await status_message.update()
+            return False
 
         # Update message with file list
         status_message.content = f"📤 **파일 업로드 중...**\n\n업로드할 파일 ({len(valid_files)}개):\n" + "\n".join([f"• {f}" for f in valid_files])
@@ -448,144 +476,28 @@ async def upload_files_to_backend(attachments, settings, document_type: str = "I
                 upload_id = resp_json.get("upload_id")
                 
                 if upload_id:
-                    # Store upload info
-                    active_uploads[upload_id] = {
-                        "files": valid_files,
-                        "started_at": asyncio.get_event_loop().time(),
-                        "examples_sent": False
-                    }
-                    
-                    # Start status checking
-                    status_message.content = (
-                        f"📤 **업로드 요청 전송 성공**\n"
-                        f"업로드 ID: {upload_id[:8]}...\n"
-                        f"파일 처리 준비 중..."
-                    )
-                    await status_message.update()
-                    # 비동기 폴링 시작
+                    # Start tracking upload status
                     start_progress_tracker(upload_id, valid_files, status_message)
+                    return True
                 else:
                     message = resp_json.get("message", "업로드 완료")
                     status_message.content = f"✅ **업로드 응답**: {message}"
                     await status_message.update()
+                    return True
                     
             except Exception as e:
                 status_message.content = f"✅ **업로드 완료**: {resp.text}"
                 await status_message.update()
+                return True
         else:
             status_message.content = f"❌ **업로드 실패**: {resp.status_code} - {resp.text}"
             await status_message.update()
+            return False
 
     except Exception as e:
-        await cl.Message(content=f"❌ **업로드 오류**: {e}").send()
+        await cl.Message(content=f"❌ **업로드 오류**: {str(e)}").send()
         logger.error(f"Upload error: {e}")
-
-async def upload_message_attachments_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
-    """Upload message attachments to backend (elements from messages)"""
-    try:
-        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
-        
-        # Allowed file extensions (same as backend validation)
-        allowed_extensions = {'.pdf', '.docx', '.txt'}
-        
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        files_payload = []
-        invalid_files = []
-        
-        for att in attachments:
-            # Get filename from attachment
-            filename = getattr(att, "name", None) or getattr(att, "filename", None) or "uploaded_file"
-            
-            # Check file extension
-            file_ext = os.path.splitext(filename)[1].lower()
-            if file_ext not in allowed_extensions:
-                invalid_files.append(f"{filename} ({file_ext})")
-                continue
-                
-            file_bytes = None
-            content_type = "application/octet-stream"
-
-            # Handle different attachment formats
-            if hasattr(att, "content"):
-                # Direct content from Chainlit
-                file_bytes = att.content
-                content_type = getattr(att, "mime", content_type)
-            elif hasattr(att, "path"):
-                # File path - read file content
-                try:
-                    with open(att.path, "rb") as f:
-                        file_bytes = f.read()
-                except Exception as e:
-                    logger.error(f"Failed to read file {att.path}: {e}")
-                    continue
-            elif hasattr(att, "url"):
-                # URL - fetch file content
-                try:
-                    resp = session.get(att.url, timeout=30)
-                    resp.raise_for_status()
-                    file_bytes = resp.content
-                    content_type = resp.headers.get("Content-Type", content_type)
-                except Exception as e:
-                    logger.error(f"Failed to fetch file from URL {att.url}: {e}")
-                    continue
-            else:
-                logger.warning(f"Unsupported attachment format for {filename}")
-                continue
-
-            if file_bytes:
-                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
-
-        # Report invalid files
-        if invalid_files:
-            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
-        
-        if not files_payload:
-            await cl.Message(content="No valid files to upload").send()
-            return
-
-        # Check file count limit
-        if len(files_payload) > 10:
-            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
-            return
-
-        # Prepare form data
-        data = {
-            "document_type": document_type,
-            "company": company or "",
-            "industry": industry or "", 
-            "report_year": report_year or "",
-            "force_upload": str(force_upload).lower()
-        }
-
-        # Send upload request
-        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
-        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
-        
-        if resp.ok:
-            try:
-                resp_json = resp.json()
-                message = resp_json.get("message", "Upload completed successfully")
-                
-            except Exception:
-                message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 요청 완료!** (배치 처리)").send()
-        else:
-            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
-            await cl.Message(content=error_msg).send()
-            logger.error(error_msg)
-
-    except Exception as e:
+        return False
         error_msg = f"Upload error: {str(e)}"
         await cl.Message(content=error_msg).send()
         logger.error(f"Upload error: {e}")
@@ -612,8 +524,7 @@ async def chat_profile():
 @cl.on_chat_start
 async def start():
     """Initialize chat session with user welcome"""
-    # Enable file uploads by setting files to None
-    files = None
+    # Simplified start: rely on global config for file upload (no modal AskFileMessage)
     
     # 사용자 정보 가져오기
     user = cl.user_session.get("user")
@@ -713,25 +624,17 @@ async def start():
             step=0.1,
             tooltip="Controls randomness in response generation"
         )
+
+        
     ]
     
     # Send settings to user
     await cl.ChatSettings(settings_components).send()
     
-    # Enable file upload UI - this is the key part that shows the upload button  
-    cl.user_session.set("files", {
-        "accept": {
-            "application/pdf": [".pdf"],
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"], 
-            "text/plain": [".txt"]
-        },
-        "max_size_mb": 50,
-        "max_files": 10
-    })
     
     # Set first message flag
-    cl.user_session.set("first_message", True)
-    
+    cl.user_session.set("first_message", False)
+
     # Display file upload information with clear instructions
     welcome_msg = f"""
 🎉 **Plan Search Chat에 오신 것을 환영합니다!**
@@ -752,56 +655,24 @@ async def start():
     
     await cl.Message(content=welcome_msg).send()
     
-#     # Show file upload options to user
-#     upload_options_msg = """
-# """
-    
-    # await cl.Message(content=upload_options_msg).send()
-    
-    # Show file upload dialog
-    try:
-        files = await cl.AskFileMessage(
-            content="📎 **파일을 업로드하여 Knowledge Base를 구성하세요:**\n\nPDF, DOCX, TXT 파일을 선택해주세요 (최대 10개 파일, 파일당 최대 50MB)",
-            accept=["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"],
-            max_size_mb=50,
-            max_files=10,
-            timeout=180,
-        ).send()
-        
-        # If files were uploaded, process them
-        if files:
-            await upload_files_to_backend(files, settings)
-        else:
-            await cl.Message(content="파일 업로드를 건너뛰셨습니다. 나중에 메시지와 함께 파일을 첨부하거나 '파일업로드' 명령어를 사용할 수 있습니다.").send()
-            
-    except Exception as e:
-        logger.error(f"File upload dialog error: {e}")
-        await cl.Message(content="파일 업로드 다이얼로그에서 오류가 발생했습니다. '파일업로드' 명령어를 사용하거나 메시지에 파일을 첨부해보세요.").send()
-    
-    
 
 @cl.on_settings_update
 async def setup_agent(settings_dict: Dict[str, Any]):
-    """Update settings when user changes them"""
-    settings = cl.user_session.get("settings")
+    """Simplified settings update"""
+    settings = cl.user_session.get("settings", ChatSettings())
     
-    # Update settings based on user input
-    settings.query_rewrite = settings_dict.get("query_rewrite", True)
-    settings.planning = settings_dict.get("planning", False)
-    settings.web_search = settings_dict.get("web_search", False)
-    settings.ytb_search = settings_dict.get("ytb_search", False)
-    settings.mcp_server = settings_dict.get("mcp_server", False)
-    settings.ai_search = settings_dict.get("ai_search", True)
-    settings.verbose = settings_dict.get("verbose", True)
-    settings.max_tokens = settings_dict.get("max_tokens", 4000)
-    settings.temperature = settings_dict.get("temperature", 0.7)
+    # Update settings with simple mapping
+    for key, value in settings_dict.items():
+        if hasattr(settings, key):
+            setattr(settings, key, value)
     
-    # Update search engine
-    search_engine_name = settings_dict.get("search_engine", list(SEARCH_ENGINES.keys())[0])
-    settings.search_engine = SEARCH_ENGINES.get(search_engine_name, list(SEARCH_ENGINES.values())[0])
-    
+    # Handle special cases
+    if "search_engine" in settings_dict:
+        search_engine_name = settings_dict["search_engine"]
+        settings.search_engine = SEARCH_ENGINES.get(search_engine_name, list(SEARCH_ENGINES.values())[0])
+
     # Check if user wants to show starters
-    show_starters = settings_dict.get("show_starters", False)
+    show_starters = settings_dict.get("show_starters", True)
     if show_starters:
         # Re-send starters
         current_profile = cl.user_session.get("chat_profile", "English")
@@ -823,11 +694,7 @@ async def setup_agent(settings_dict: Dict[str, Any]):
             )
         
         await cl.Message(content=starters_message, actions=actions).send()
-    
     cl.user_session.set("settings", settings)
-    
-    # Send confirmation message
-    ui_text = UI_TEXT[settings.language]
     await cl.Message(content="⚙️ Settings updated successfully!").send()
 
 async def safe_stream_token(msg: cl.Message, content: str) -> bool:
@@ -1179,213 +1046,321 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     await safe_update_message(msg)
     logger.info("Streaming completed")
 
-async def upload_files_to_backend(files, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
-    """Upload files from cl.AskFileMessage to backend /upload_files endpoint"""
+
+def clean_response_text(text: str) -> str:
+    """Clean response text to prevent unwanted markdown formatting"""
+    return text.replace("~~", "==")
+
+def create_api_payload(settings: ChatSettings) -> dict:
+    """Create API payload from settings"""
+    message_history = cl.chat_context.to_openai()
+    return {
+        "messages": message_history[-10:],
+        "max_tokens": settings.max_tokens,
+        "temperature": settings.temperature,
+        "query_rewrite": settings.query_rewrite,
+        "planning": settings.planning,
+        "include_web_search": settings.web_search,
+        "include_ytb_search": settings.ytb_search,
+        "include_mcp_server": settings.mcp_server,
+        "include_ai_search": settings.ai_search,
+        "search_engine": settings.search_engine,
+        "stream": True,
+        "locale": settings.language,
+        "verbose": settings.verbose,
+    }
+
+async def handle_error_response(msg: cl.Message, error_type: str, error_msg: str):
+    """Handle different types of errors uniformly"""
+    full_msg = f"❌ **{error_type}**: {error_msg}"
+    await safe_stream_token(msg, full_msg)
+    logger.error(f"{error_type}: {error_msg}")
+
+async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
+    """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
+    if not message or message.strip() == "":
+        return
+    
+    # Get conversation history
+    message_history = cl.chat_context.to_openai()
+    
+    # Helper function to clean text content
+    def clean_response_text(text: str) -> str:
+        """Clean response text to prevent unwanted markdown formatting"""
+        # Replace ~~ with == to avoid strikethrough
+        cleaned_text = text.replace("~~", "==")
+        # You can add more replacements here if needed
+        # cleaned_text = cleaned_text.replace("**", "*")  # Convert bold to italic if needed
+        return cleaned_text
+    
+    # Prepare the API payload
+    payload = {
+        "messages": message_history[-10:],
+        "max_tokens": settings.max_tokens,
+        "temperature": settings.temperature,
+        "query_rewrite": settings.query_rewrite,
+        "planning": settings.planning,
+        "include_web_search": settings.web_search,
+        "include_ytb_search": settings.ytb_search,
+        "include_mcp_server": settings.mcp_server,
+        "include_ai_search": settings.ai_search,
+        "search_engine": settings.search_engine,
+        "stream": True,
+        "locale": settings.language,
+        "verbose": settings.verbose,
+    }
+    
+    # Debug logging
+    logger.info(f"API Payload: query_rewrite={settings.query_rewrite}, web_search={settings.web_search}, planning={settings.planning},"
+          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, search_engine={settings.search_engine}, "
+          f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
+          f"language={settings.language}, verbose={settings.verbose}")
+    
+    # Create message for streaming response
+    ui_text = UI_TEXT[settings.language]
+    msg = cl.Message(content="")
+    await msg.send()
+    
     try:
-        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
-        
-        # Allowed file extensions (same as backend validation)
-        allowed_extensions = {'.pdf', '.docx', '.txt'}
-        
+        # Set up session with retry capability
         session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(max_retries=3)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
-
-        files_payload = []
-        invalid_files = []
         
-        for file in files:
-            # Get filename from file object
-            filename = file.name
+        api_url = SK_API_URL
+        
+        # Create step for API call with detailed information
+        async with cl.Step(name="API Request", type="run") as step:
+            step.input = {
+                "endpoint": api_url,
+                "query_rewrite": settings.query_rewrite,
+                "planning": settings.planning,
+                "web_search": settings.web_search,
+                "ytb_search": settings.ytb_search,
+                "mcp_server": settings.mcp_server,
+                "ai_search": settings.ai_search,
+                "search_engine": settings.search_engine,
+                "verbose": settings.verbose,
+                "locale": settings.language,
+            }
             
-            # Check file extension
-            file_ext = os.path.splitext(filename)[1].lower()
-            if file_ext not in allowed_extensions:
-                invalid_files.append(f"{filename} ({file_ext})")
-                continue
-                
-            file_bytes = None
-            content_type = getattr(file, "type", "application/octet-stream")
-
-            # Handle Chainlit AskFileMessage response
-            if hasattr(file, "content") and file.content:
-                # Direct content from Chainlit
-                file_bytes = file.content
-            elif hasattr(file, "path") and file.path:
-                # File path - read file content
-                try:
-                    with open(file.path, "rb") as f:
-                        file_bytes = f.read()
-                except Exception as e:
-                    logger.error(f"Failed to read file {file.path}: {e}")
-                    continue
-            else:
-                logger.warning(f"No valid content found for file {filename}")
-                continue
-
-            if file_bytes:
-                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
-
-        # Report invalid files
-        if invalid_files:
-            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
-        
-        if not files_payload:
-            await cl.Message(content="No valid files to upload").send()
-            return
-
-        # Check file count limit
-        if len(files_payload) > 10:
-            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
-            return
-
-        # Prepare form data
-        data = {
-            "document_type": document_type,
-            "company": company or "",
-            "industry": industry or "", 
-            "report_year": report_year or "",
-            "force_upload": str(force_upload).lower()
-        }
-
-        # Send upload request
-        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
-        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
-        
-        if resp.ok:
-            try:
-                resp_json = resp.json()
-                message = resp_json.get("message", "Upload completed successfully")
-                
-            except Exception:
-                message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 요청 완료!** (배치 처리)").send()
-        else:
-            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
-            await cl.Message(content=error_msg).send()
-            logger.error(error_msg)
-
-    except Exception as e:
-        error_msg = f"Upload error: {str(e)}"
-        await cl.Message(content=error_msg).send()
-        logger.error(f"Upload error: {e}")
-
-async def upload_message_attachments_to_backend(attachments, settings, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
-    """Upload message attachments to backend (elements from messages)"""
-    try:
-        await cl.Message(content="📤 **파일 업로드 진행중...**\n\n🔄 해당 파일을 서버에 업로드하고 Knowledge Base를 구성중입니다\n⏱️ 잠시만 기다려주세요...").send()
-        
-        # Allowed file extensions (same as backend validation)
-        allowed_extensions = {'.pdf', '.docx', '.txt'}
-        
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        files_payload = []
-        invalid_files = []
-        
-        for att in attachments:
-            # Get filename from attachment
-            filename = getattr(att, "name", None) or getattr(att, "filename", None) or "uploaded_file"
+            # Make request with stream=True
+            response = session.post(
+                api_url,
+                json=payload,
+                timeout=(5, 120),
+                stream=True,
+                headers={"Accept": "text/event-stream"}
+            )
             
-            # Check file extension
-            file_ext = os.path.splitext(filename)[1].lower()
-            if file_ext not in allowed_extensions:
-                invalid_files.append(f"{filename} ({file_ext})")
-                continue
+            step.output = f"Response status: {response.status_code}"
+            
+            logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+            
+            if response.status_code == 200:
+                content_type = response.headers.get('Content-Type', '')
                 
-            file_bytes = None
-            content_type = "application/octet-stream"
-
-            # Handle different attachment formats
-            if hasattr(att, "content"):
-                # Direct content from Chainlit
-                file_bytes = att.content
-                content_type = getattr(att, "mime", content_type)
-            elif hasattr(att, "path"):
-                # File path - read file content
-                try:
-                    with open(att.path, "rb") as f:
-                        file_bytes = f.read()
-                except Exception as e:
-                    logger.error(f"Failed to read file {att.path}: {e}")
-                    continue
-            elif hasattr(att, "url"):
-                # URL - fetch file content
-                try:
-                    resp = session.get(att.url, timeout=30)
-                    resp.raise_for_status()
-                    file_bytes = resp.content
-                    content_type = resp.headers.get("Content-Type", content_type)
-                except Exception as e:
-                    logger.error(f"Failed to fetch file from URL {att.url}: {e}")
-                    continue
+                if 'text/event-stream' in content_type:
+                    # Process Server-Sent Events (SSE) with tool calling steps
+                    async with cl.Step(name="Processing Response", type="tool") as process_step:
+                        process_step.input = "Processing streaming response..."
+                        
+                        accumulated_content = ""
+                        current_tool_step = None
+                        tool_steps = {}
+                        
+                        logger.info("Starting SSE processing loop...")
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            
+                            # Decode the line
+                            line = line.decode('utf-8')
+                            logger.info(f"SSE line received: {line}")
+                            
+                            # Skip SSE comments and empty lines
+                            if line.startswith(':') or not line.strip():
+                                continue
+                            
+                            # Handle SSE format (data: prefix)
+                            if line.startswith('data: '):
+                                line = line[6:].strip()  # Remove the 'data: ' prefix
+                                
+                                # Status message handling - create tool steps for different operations
+                                if line.startswith('### '):
+                                    step_content = line[4:]
+                                    
+                                    # Complete previous step if exists
+                                    if current_tool_step:
+                                        current_tool_step.output = "✅ Completed"
+                                        await safe_send_step(current_tool_step)
+                                    
+                                    # Decode step content (name, code, description)
+                                    step_name, code_content, description = decode_step_content(step_content)
+                                    
+                                    # Create new step for each tool operation with appropriate types
+                                    step_type = "tool"
+                                    step_icon = "🔧"
+                                    
+                                    # Determine step type and icon based on step name
+                                    step_name_lower = step_name.lower()
+                                    try:
+                                        if ui_text.get("analyzing", "").lower() in step_name_lower:
+                                            step_type = "intent"
+                                            step_icon = "🧠"
+                                        elif ui_text.get("analyze_complete", "").lower() in step_name_lower:
+                                            step_type = "intent"
+                                            step_icon = "🧠"
+                                        elif ui_text.get("search_planning", "").lower() in step_name_lower:
+                                            step_type = "planning"
+                                            step_icon = "📋"
+                                        elif ui_text.get("plan_done", "").lower() in step_name_lower:
+                                            step_type = "planning"
+                                            step_icon = "📋"
+                                        elif ui_text.get("searching", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🌐"
+                                        elif ui_text.get("search_done", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🌐"                                            
+                                        elif ui_text.get("searching_YouTube", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🎬"
+                                        elif ui_text.get("YouTube_done", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🎬"                                            
+                                        elif ui_text.get("answering", "").lower() in step_name_lower:
+                                            step_type = "llm"
+                                            step_icon = "✏️"
+                                        elif ui_text.get("search_and_answer", "").lower() in step_name_lower:
+                                            step_type = "llm"
+                                            step_icon = "✏️"
+                                        elif "context information" in step_name_lower:
+                                            step_type = "tool"
+                                            step_icon = "📃"
+                                    except KeyError as e:
+                                        logger.warning(f"Missing UI text key: {e}")
+                                    
+                                    current_tool_step = cl.Step(
+                                        name=f"{step_icon} {step_name}", 
+                                        type=step_type
+                                    )
+                                    
+                                    # Set input based on available content
+                                    if code_content:
+                                        # Display code with syntax highlighting
+                                        current_tool_step.input = f"```python\n{code_content}\n```"
+                                    elif description:
+                                        # Display description
+                                        current_tool_step.input = description
+                                    else:
+                                        # Default message
+                                        current_tool_step.input = f"Executing: {step_name}"
+                                    
+                                    if not await safe_send_step(current_tool_step):
+                                        logger.warning(f"Failed to send tool step: {step_name}")
+                                        break  # Exit if connection is lost
+                                    
+                                    # Store step for later reference
+                                    tool_steps[step_name] = current_tool_step
+                            else:
+                                # Regular content - clean and accumulate and stream
+                                cleaned_line = clean_response_text(line)  # Clean the line before processing
+                                
+                                if accumulated_content:
+                                    # Apply formatting rules for line breaks
+                                    if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
+                                        accumulated_content += "\n\n" + cleaned_line
+                                    else:
+                                        accumulated_content += "\n" + cleaned_line
+                                else:
+                                    accumulated_content = cleaned_line
+                                
+                                # Stream update to UI safely with cleaned content
+                                if not await safe_stream_token(msg, cleaned_line + "\n"):
+                                    logger.warning("Stream connection lost, stopping streaming")
+                                    break  # Exit if connection is lost
+                        
+                        # Close any remaining tool step
+                        if current_tool_step:
+                            current_tool_step.output = "✅ Completed"
+                            await safe_send_step(current_tool_step)
+                        
+                        process_step.output = f"✅ Processed {len(accumulated_content)} characters across {len(tool_steps)} tool steps"
+                
+                else:
+                    # Handle regular non-streaming response
+                    async with cl.Step(name="Processing Non-Streaming Response", type="tool") as process_step:
+                        logger.info("Not a chunked response, trying to process as regular response")
+                        try:
+                            chunks = []
+                            for chunk in response.iter_content(chunk_size=None):
+                                if chunk:
+                                    chunks.append(chunk)
+                            
+                            if chunks:
+                                response_text = b''.join(chunks).decode('utf-8', errors='replace')
+                                cleaned_response = clean_response_text(response_text) # Clean the response
+                                
+                                # Try to parse as JSON first
+                                try:
+                                    response_data = json.loads(response_text)
+                                    if isinstance(response_data, dict) and "content" in response_data:
+                                        cleaned_content = clean_response_text(response_data["content"])
+                                        await safe_stream_token(msg, cleaned_content)
+                                        process_step.output = f"✅ Parsed JSON response with content: {cleaned_content[:50]}..."
+                                    else:
+                                        await safe_stream_token(msg, cleaned_response)
+                                        process_step.output = "✅ JSON response without content field, using raw text"
+                                except json.JSONDecodeError:
+                                    # Not valid JSON, just use as text
+                                    await safe_stream_token(msg, cleaned_response)
+                                    process_step.output = "✅ Not a valid JSON response, using raw text"
+                            else:
+                                error_msg = "No response received from server."
+                                await safe_stream_token(msg, error_msg)
+                                process_step.output = error_msg
+                        
+                        except Exception as e:
+                            error_msg = f"Error processing response: {str(e)}"
+                            await safe_stream_token(msg, error_msg)
+                            process_step.output = error_msg
             else:
-                logger.warning(f"Unsupported attachment format for {filename}")
-                continue
-
-            if file_bytes:
-                files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
-
-        # Report invalid files
-        if invalid_files:
-            await cl.Message(content=f"Skipped unsupported files: {', '.join(invalid_files)}. Only PDF, DOCX, TXT files are allowed.").send()
-        
-        if not files_payload:
-            await cl.Message(content="No valid files to upload").send()
-            return
-
-        # Check file count limit
-        if len(files_payload) > 10:
-            await cl.Message(content="Too many files. Maximum 10 files allowed per upload.").send()
-            return
-
-        # Prepare form data
-        data = {
-            "document_type": document_type,
-            "company": company or "",
-            "industry": industry or "", 
-            "report_year": report_year or "",
-            "force_upload": str(force_upload).lower()
-        }
-
-        # Send upload request
-        logger.info(f"Uploading {len(files_payload)} files to {UPLOAD_API_URL}")
-        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
-        
-        if resp.ok:
-            try:
-                resp_json = resp.json()
-                message = resp_json.get("message", "Upload completed successfully")
-            except Exception:
-                message = "Upload completed successfully"
-            upload_id = resp_json.get("upload_id") if isinstance(resp_json, dict) else None
-            if upload_id:
-                progress_msg = cl.Message(content=f"📤 업로드 ID {upload_id[:8]}... 상태 추적 시작")
-                await progress_msg.send()
-                file_names = [t[1][0] for t in files_payload]
-                start_progress_tracker(upload_id, file_names, progress_msg)
-            else:
-                await cl.Message(content=f"✅ **업로드 완료!**\n\n📋 결과: {message}\n\n💡 이제 업로드된 문서에 대해 질문해보세요!").send()
-        else:
-            error_msg = f"Upload failed: {resp.status_code} - {resp.text}"
-            await cl.Message(content=error_msg).send()
-            logger.error(error_msg)
-
+                error_msg = f"Error: {response.status_code} - {response.text}"
+                await safe_stream_token(msg, error_msg)
+                step.output = error_msg
+    
+    except requests.exceptions.Timeout:
+        error_msg = "Error: Request timed out. The server took too long to respond."
+        await safe_stream_token(msg, error_msg)
+        logger.error("Request timed out")
+    except requests.exceptions.ConnectionError:
+        error_msg = "Error: Connection failed. Please check if the API server is running."
+        await safe_stream_token(msg, error_msg)
+        logger.error("Connection error")
+    except requests.exceptions.ChunkedEncodingError:
+        error_msg = "Error: Connection interrupted while receiving data from the server."
+        await safe_stream_token(msg, error_msg)
+        logger.error("Chunked encoding error - connection interrupted")
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Error connecting to the API: {str(e)}"
+        await safe_stream_token(msg, error_msg)
+        logger.error(f"Request exception: {type(e).__name__}: {str(e)}")
+    except json.JSONDecodeError as e:
+        error_msg = "Error: Received invalid JSON from the server."
+        await safe_stream_token(msg, error_msg)
+        logger.error(f"JSON decode error: {e}")
     except Exception as e:
-        error_msg = f"Upload error: {str(e)}"
-        await cl.Message(content=error_msg).send()
-        logger.error(f"Upload error: {e}")
+        error_msg = f"Error: {str(e)}"
+        await safe_stream_token(msg, error_msg)
+        logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    
+    # Finalize the message safely
+    await safe_update_message(msg)
+    logger.info("Streaming completed")
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -1396,29 +1371,25 @@ async def main(message: cl.Message):
         cl.user_session.set("settings", settings)
     
     # Check for file attachments (try multiple possible attributes)
+    # Collect attachments uniformly
     attachments = (getattr(message, "elements", None) or 
                   getattr(message, "files", None) or 
                   getattr(message, "attachments", None))
     
+    uploaded = None
+   
     if attachments:
-        # Handle file upload from message attachments
-        await upload_message_attachments_to_backend(attachments, settings)
-        return
+        uploaded = await handle_file_upload(attachments, settings)
+        # If only files (no textual content), stop here
+        if (not message.content) or (message.content.strip() == ""):
+            return
     
     message_content = message.content
     
-    # Handle specific commands first
-    if message_content == "파일업로드":
-        res = await cl.AskFileMessage(
-            content="업로드할 파일들을 선택해주세요 (PDF, DOCX, TXT 파일만 지원, 최대 10개 파일, 파일당 최대 50MB)",
-            accept=["pdf", "docx", "txt"],
-            max_files=10,
-            max_size_mb=50
-        ).send()
-        
-        if res:
-            await upload_files_to_backend(res, settings)
-            return
+    # Provide light feedback if user sent text along with freshly uploaded files
+    if uploaded and message_content:
+        await cl.Message(content="📎 첨부한 파일을 처리한 후 답변을 생성합니다...").send()
+        await stream_chat_with_api(message.content, settings)
 
     # Process the message with streaming
     await stream_chat_with_api(message.content, settings)
@@ -1435,29 +1406,6 @@ async def on_action(action: cl.Action):
     # Return success
     return "Chat cleared successfully"
 
-@cl.action_callback("upload_files_action")
-async def on_upload_files_action(action: cl.Action):
-    """Handle file upload action"""
-    settings = cl.user_session.get("settings", {})
-    
-    try:
-        res = await cl.AskFileMessage(
-            content="업로드할 파일들을 선택해주세요 (PDF, DOCX, TXT 파일만 지원, 최대 10개 파일, 파일당 최대 50MB)",
-            accept=["pdf", "docx", "txt"],
-            max_files=10,
-            max_size_mb=50
-        ).send()
-        
-        if res:
-            await upload_files_to_backend(res, settings)
-        else:
-            await cl.Message(content="파일이 선택되지 않았습니다.").send()
-            
-    except Exception as e:
-        logger.error(f"File upload action error: {e}")
-        await cl.Message(content="파일 업로드 중 오류가 발생했습니다.").send()
-    
-    return "File upload action completed"
 
 @cl.action_callback("help_action")
 async def on_help_action(action: cl.Action):

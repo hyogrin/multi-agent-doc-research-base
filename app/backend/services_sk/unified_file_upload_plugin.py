@@ -1255,7 +1255,7 @@ Ready to upload files?""",
         industry: str = "",
         report_year: str = "",
         force_upload: str = "false",
-        is_debug: bool = True
+        is_debug: bool = False
     ) -> str:
         """Upload and process multiple files for document search."""
         try:
