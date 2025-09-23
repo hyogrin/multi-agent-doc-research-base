@@ -22,8 +22,8 @@ INTENT_ANALYZE_PROMPT = load_prompt(
     os.path.join(current_dir, "..", "prompts", "intent_analyze_prompt.yaml"),
     encoding="utf-8",
 )
-PRODUCT_PLAN_PROMPT = load_prompt(
-    os.path.join(current_dir, "..", "prompts", "product_planner_prompt.yaml"),
+RESEARCH_PLAN_PROMPT = load_prompt(
+    os.path.join(current_dir, "..", "prompts", "research_planner_prompt.yaml"),
     encoding="utf-8",
 )
 GENERAL_PLAN_PROMPT = load_prompt(
@@ -117,7 +117,7 @@ class IntentPlanPlugin:
 
             # Validate intent value
             valid_intents = [
-                "product_query",
+                "research",
                 "general_query",
                 "small_talk",
                 "tool_calling",
@@ -170,8 +170,8 @@ class IntentPlanPlugin:
                 f"Generating search plan for intent: {user_intent} with query: {enriched_query} and locale: {locale}"
             )
 
-            if user_intent == "product_query":
-                planner_prompt = PRODUCT_PLAN_PROMPT.format(
+            if user_intent == "research":
+                planner_prompt = RESEARCH_PLAN_PROMPT.format(
                     planner_max_plans=self.planner_max_plans,
                     current_date=current_date,
                     enriched_query=enriched_query,
@@ -224,37 +224,6 @@ class IntentPlanPlugin:
         Returns:
             JSON string with basic intent classification
         """
-        query_lower = query.lower()
-
-        # Product query keywords
-        product_keywords = [
-            "product",
-            "제품",
-            "상품",
-            "사양",
-            "기능",
-            "가격",
-            "리뷰",
-            "평가",
-            "specification",
-            "feature",
-            "price",
-            "review",
-            "evaluation",
-        ]
-
-        # Check for product query intent
-        for keyword in product_keywords:
-            if keyword in query_lower:
-                result = {
-                    "user_intent": "market_research",
-                    "enriched_query": query,
-                    "confidence": 0.6,
-                    "keywords": [keyword],
-                    "target_info": "market information",
-                }
-                return json.dumps(result)
-
         # Default to general query
         result = {
             "user_intent": "general_query",

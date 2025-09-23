@@ -1,4 +1,4 @@
-### Plan Search API with Bing Search API Test
+### Doc ResearchAPI with Bing Search API Test
 curl -X POST http://localhost:8000/plan_search \
   -H "Content-Type: application/json" \
   -d '{
@@ -19,7 +19,7 @@ curl -X POST http://localhost:8000/plan_search \
   "verbose": true
 }' --no-buffer
 
-### Plan Search with Grounding with Bing API Test
+### Doc Researchwith Grounding with Bing API Test
 curl -X POST http://localhost:8000/plan_search \
   -H "Content-Type: application/json" \
   -d '{
@@ -41,7 +41,7 @@ curl -X POST http://localhost:8000/plan_search \
 }' --no-buffer
 
 
-### Plan Search API with MCP Test
+### Doc ResearchAPI with MCP Test
 curl -X POST http://localhost:8000/plan_search \
   -H "Content-Type: application/json" \
   -d '{
@@ -63,7 +63,7 @@ curl -X POST http://localhost:8000/plan_search \
   "verbose": true
 }' --no-buffer
 
-### Plan Search API with MCP Test
+### Doc ResearchAPI with MCP Test
 curl -X POST http://localhost:8000/plan_search \
   -H "Content-Type: application/json" \
   -d '{

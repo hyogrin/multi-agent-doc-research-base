@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Plan Search Chat - Chainlit Version
+# Doc ResearchChat - Chainlit Version
 # Run the Chainlit application
 
-echo "Starting Plan Search Chat (Chainlit Version)..."
+echo "Starting Doc ResearchChat (Chainlit Version)..."
 
 # Load environment variables if .env file exists
 if [ -f .env ]; then

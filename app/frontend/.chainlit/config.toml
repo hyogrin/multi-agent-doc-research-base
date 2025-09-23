@@ -56,7 +56,7 @@ enable_session_recovery = true
 
 [UI]
 # Name of the app and chatbot.
-name = "Plan Search Chat"
+name = "Doc ResearchChat"
 
 # Show the readme while the thread is empty.
 show_readme_as_default = true
@@ -83,7 +83,7 @@ show_starters = true
 # The CSS file can be served from the public directory or via an external link.
 # custom_css = "/public/custom.css"
 
-custom_logo = "/public/images/ai_foundry_icon_small.png"
+custom_logo = "/public/images/azure-ai-search.png"
 
 login_page_image = "/public/images/ai_foundry_background.png"
 

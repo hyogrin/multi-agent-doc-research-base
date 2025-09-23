@@ -8,45 +8,41 @@ template: |
 
   Step 1: Analyze the user query to determine the intent.  
   Step 2: If the intent involves retrieving external information, optimize the query for search.  
-  Step 3: If the intent is tool-related, extract the tool name.
+  Step 3: If the intent is tool-related, extract the tool name.  
+  Step 4: For "research", distinguish whether the query requires deep reasoning, synthesis of multiple sources, or generation of structured research-style outputs (reports, comparisons, evaluations, strategy drafts, etc.).
 
   Current date: {current_date}  
   User query: {original_query}
 
   Classify the intent into one of the following:
 
-  1. "product_query":  
-    The user is asking about product details, features, specifications, compatibility, or usage.
+  1. "general_query":  
+    The user is asking a **simple fact-based or instructional** question that requires **retrieving information directly from external sources**.  
+    - Output should be concise and primarily information-seeking.  
+    - Example: "What happened at the Apple event yesterday?"  
+    - Example: "How to fix a leaky faucet?"
 
-  2. "general_query":  
-    The user is asking a **fact-based or instructional** question that requires **looking up real-world or current information** from **external sources like websites or YouTube**.  
-    These are **information-seeking** queries such as:  
-    - "How to fix a leaky faucet?"  
-    - "What happened at the Apple event yesterday?"  
-    - "YouTube에서 가장 인기 있는 요가 채널은?"  
-    - "What's the weather like in Tokyo?"
+  2. "small_talk":  
+    The user is making **casual conversation** without requiring factual or procedural answers.  
+    These are **chit-chat, philosophical, opinion-based**, or **non-informational** queries.  
+    - Example: "What's up?"  
+    - Example: "나는 유튜브가 좋아"
 
-  3. "small_talk":  
-    The user is making **casual conversation**, **expressing feelings**, or **asking questions that don't require factual search**.  
-    These are **chit-chat, philosophical, opinion-based**, or **non-informational** queries such as:  
-    - "hi"  
-    - "hello"  
-    - "what's up?"  
-    - "How are you today?"  
-    - "Do you like music?"  
-    - "안녕"  
-    - "요즘 기분 어때?"  
-    - "나는 유튜브가 좋아"
+  3. "research":  
+    The user is requesting **in-depth exploration, reasoning, or synthesis** that goes **beyond single fact lookup**.  
+    This includes:  
+      - Generating a **research report or deep-dive analysis**.  
+      - Conducting **comparisons, benchmarking, evaluations, or multi-perspective synthesis**.  
+      - Handling **multi-step tasks** (e.g., analyzing datasets, combining multiple sources, scenario analysis, recommendations).  
+      - Answering questions that imply the need for **multi-agent reasoning**, **long-form structured outputs**, or **evidence-based argumentation**.  
+    - Example: "Write a detailed report on the economic impact of AI adoption in South Korea."  
+    - Example: "Evaluate strengths and weaknesses of Azure AI Speech vs GPT-4 Audio API for enterprise use."  
+    - Example: "Summarize 10 uploaded documents into a consolidated research report with insights and recommendations."
 
-  4. "generate_report":  
-    The user is requesting the generation of a report based on the provided information or data.
-
-  5. "tool_calling":  
-    The user is explicitly or implicitly **requesting a specific tool or function to be executed** (e.g., search, summarization, video lookup, etc.).  
-    For example:  
-    - "Summarize this YouTube video"  
-    - "Translate this to Korean"  
-    - "Run the image captioning tool"
+  4. "tool_calling":  
+    The user is explicitly or implicitly **requesting a specific tool or function to be executed** (summarization, translation, captioning, etc.).  
+    - Example: "Translate this to Korean"  
+    - Example: "Run the image captioning tool"  
 
   **IMPORTANT**: You must respond with ONLY a valid JSON object. Do not include any other text, explanations, or markdown formatting.
 

@@ -10,20 +10,41 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from utils.enum import SearchEngine
 from config.config import Settings
-from model.models import ChatRequest, ChatResponse, PlanSearchRequest, FileUploadResponse
-from services.orchestrator import Orchestrator
-from services.plan_executor import PlanExecutor
+from model.models import ChatResponse, PlanSearchRequest, FileUploadResponse
 from services_sk.plan_search_executor_sk import PlanSearchExecutorSK
 from services_sk.unified_file_upload_plugin import UnifiedFileUploadPlugin
-from services.search_crawler import GoogleSearchCrawler, BingSearchCrawler
-from services.bing_grounding_search import BingGroundingSearch, BingGroundingCrawler
-from services.query_rewriter import QueryRewriter
+
+import logging
+import sys
+from datetime import datetime
+
+
+# 로그 파일명에 타임스탬프 추가
+log_filename = f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_filename, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
+    ]
 )
+
+# Semantic Kernel의 상세한 로그 억제
+semantic_kernel_loggers = [
+    "semantic_kernel.agents.runtime.in_process_runtime",
+    "semantic_kernel.agents.runtime.in_process_runtime.events", 
+    "semantic_kernel.agents.runtime",
+    "semantic_kernel.agents",
+    "in_process_runtime.events",
+    "in_process_runtime"
+]
+
+for logger_name in semantic_kernel_loggers:
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -285,7 +306,7 @@ async def plan_search_info():
     return {
         "endpoint": "/plan_search",
         "method": "POST",
-        "description": "Plan Search endpoint for processing chat requests",
+        "description": "Doc Researchendpoint for processing chat requests",
         "required_fields": ["messages"],
         "optional_fields": ["max_tokens", "temperature", "query_rewrite", "planning", "search_engine", "stream", "locale"],
         "example_usage": "Send POST request with JSON payload containing messages array",
@@ -306,7 +327,7 @@ async def plan_search_endpoint(
                     request.messages,
                     request.max_tokens,
                     request.temperature,
-                    request.query_rewrite,
+                    request.research,
                     request.planning,
                     request.search_engine,  
                     stream=True,
@@ -350,151 +371,6 @@ async def plan_search_endpoint(
             status_code=500,
             detail=f"Failed to generate risk analysis response: {str(e)}"
         )
-    
-
-
-@app.post("/deep_search", response_model=ChatResponse)
-async def deep_search_endpoint(
-    request: ChatRequest, 
-):
-    try:
-        plan_executor = PlanExecutor(settings)
-        
-        redis_config = {
-            "host": settings.REDIS_HOST,
-            "port": settings.REDIS_PORT,
-            "password": settings.REDIS_PASSWORD,
-            "db": settings.REDIS_DB,
-            "decode_responses": True
-        }
-        
-        search_crawler = None
-        
-        if request.search_engine == SearchEngine.GOOGLE_SEARCH_CRAWLING:
-            search_crawler = GoogleSearchCrawler(redis_config=redis_config)
-        elif request.search_engine == SearchEngine.BING_SEARCH_CRAWLING:
-            search_crawler = BingSearchCrawler(redis_config=redis_config)
-        elif request.search_engine == SearchEngine.BING_GROUNDING_CRAWLING:
-            search_crawler = BingGroundingCrawler(redis_config=redis_config)    
-        
-        query_rewriter = QueryRewriter(client=plan_executor.client, settings=settings)
-        plan_executor.query_rewriter = query_rewriter
-        
-        if request.stream:
-            return StreamingResponse(
-                plan_executor.generate_response(
-                    request.messages,
-                    request.max_tokens,
-                    request.temperature,
-                    request.query_rewrite,
-                    request.search_engine,
-                    search_crawler=search_crawler,
-                    stream=True,
-                    elapsed_time=True,
-                    locale=request.locale
-                ),
-                media_type="text/event-stream"
-            )
-        
-        response_generator = plan_executor.generate_response(
-            request.messages,
-            request.max_tokens,
-            request.temperature,
-            request.query_rewrite,
-            request.search_engine,
-            search_crawler=search_crawler,
-            stream=False,
-            elapsed_time=True,
-            locale=request.locale
-        )
-        
-        response = await response_generator.__anext__()
-        
-        return ChatResponse(
-            message=response,
-            success=True
-        )
-    except Exception as e:
-        logger.error(f"Error processing chat request: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate response: {str(e)}"
-        )
-    
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(
-    request: ChatRequest, 
-):
-    try:
-        orchestrator = Orchestrator(settings)
-        
-        redis_config = {
-            "host": settings.REDIS_HOST,
-            "port": settings.REDIS_PORT,
-            "password": settings.REDIS_PASSWORD,
-            "db": settings.REDIS_DB,
-            "decode_responses": True
-        }
-
-        #TODO : Refactor to use orchestrator.search_crawler
-        search_crawler = None
-        
-        logger.debug(f"request.search_engine: {request.search_engine}")
-        if request.search_engine == SearchEngine.GOOGLE_SEARCH_CRAWLING:
-            search_crawler = GoogleSearchCrawler(redis_config=redis_config)
-        elif request.search_engine == SearchEngine.BING_SEARCH_CRAWLING:
-            search_crawler = BingSearchCrawler(redis_config=redis_config)
-        elif request.search_engine == SearchEngine.BING_GROUNDING_CRAWLING:
-            search_crawler = BingGroundingCrawler(redis_config=redis_config)
-
-        bing_grounding_search = BingGroundingSearch(redis_config=redis_config)
-        query_rewriter = QueryRewriter(client=orchestrator.client, settings=settings)
-
-        orchestrator.bing_grounding_search = bing_grounding_search
-        orchestrator.query_rewriter = query_rewriter
-        
-        if request.stream:
-            return StreamingResponse(
-                orchestrator.generate_response(
-                    request.messages,
-                    request.max_tokens,
-                    request.temperature,
-                    request.query_rewrite,
-                    request.search_engine,
-                    search_crawler=search_crawler,
-                    stream=True,
-                    elapsed_time=True,
-                    locale=request.locale
-                ),
-                media_type="text/event-stream"
-            )
-        
-        response_generator = orchestrator.generate_response(
-            request.messages,
-            request.max_tokens,
-            request.temperature,
-            request.query_rewrite,
-            request.search_engine,
-            search_crawler=search_crawler, 
-            stream=False,
-            elapsed_time=True,
-            locale=request.locale
-        )
-        
-        response = await response_generator.__anext__()
-        
-        return ChatResponse(
-            message=response,
-            success=True
-        )
-    except Exception as e:
-        logger.error(f"Error processing chat request: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate response: {str(e)}"
-        )
-
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

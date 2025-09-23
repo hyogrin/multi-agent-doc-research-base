@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Test script for the Plan Search Chat applications
+# Test script for the Doc ResearchChat applications
 
-echo "=== Plan Search Chat Test Script ==="
+echo "=== Doc ResearchChat Test Script ==="
 echo ""
 
 # Check if Python is available
@@ -49,32 +49,6 @@ else
     echo "   Make sure the backend server is running"
 fi
 
-# Option to run the application
-echo ""
-echo "🚀 Ready to run applications!"
-echo ""
-echo "Choose an option:"
-echo "1) Run Chainlit version (Recommended)"
-echo "2) Run Gradio version (Original)"
-echo "3) Exit"
-echo ""
-read -p "Enter your choice (1-3): " choice
 
-case $choice in
-    1)
-        echo "Starting Chainlit version..."
-        ./run_chainlit.sh
-        ;;
-    2)
-        echo "Starting Gradio version..."
-        python src/app.py
-        ;;
-    3)
-        echo "Exiting..."
-        exit 0
-        ;;
-    *)
-        echo "Invalid choice. Exiting..."
-        exit 1
-        ;;
-esac
+echo "Starting Chainlit version..."
+./run_chainlit.sh

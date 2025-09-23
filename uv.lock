@@ -441,16 +441,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agents"
-version = "1.1.0b1"
+version = "1.2.0b3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
     { name = "isodate" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/a1/5013d9fbc465d6e98442f86576eda8055c42369d3db99a20a48899480738/azure_ai_agents-1.1.0b1.tar.gz", hash = "sha256:43e9f1b49d813ca9da843ae7e85488cc04413c3a1f59b60a971361850265fb69", size = 302260, upload-time = "2025-05-21T18:57:07.757Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/52/3c1af9ed86582f09343f135d527ca26f0bf9659c01ccbddb650bbb952963/azure_ai_agents-1.2.0b3.tar.gz", hash = "sha256:440d7fca98c0b13654a57dcd159cdf64d1024f9baacd1a4354ce91a290d3741e", size = 362563, upload-time = "2025-08-22T22:41:58.609Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/2a/82258b6250728b17277298855db691be4b7dfcb9d15b34da89808c2a5ac7/azure_ai_agents-1.1.0b1-py3-none-any.whl", hash = "sha256:d3ee4e596cad9ab3e239a988b5f4ddccc06fcde2c6e3d91e2c8b94bfa4c71844", size = 189449, upload-time = "2025-05-21T18:57:09.632Z" },
+    { url = "https://files.pythonhosted.org/packages/99/a4/c916745e150b5e157688da9a7965d62efb82ad940f2991260d1d2b79fcf1/azure_ai_agents-1.2.0b3-py3-none-any.whl", hash = "sha256:fec3e92fac5de2c18dee2d4def734825c2a4880bee39b3c237a7ad8079bfa8a7", size = 208129, upload-time = "2025-08-22T22:42:00.249Z" },
 ]
 
 [[package]]
@@ -512,7 +512,7 @@ redteam = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "1.0.0b11"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-ai-agents" },
@@ -521,9 +521,9 @@ dependencies = [
     { name = "isodate" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/01/4b/0a879eb66b5d9a08ab09292ff9a36a4e9c855b458d0e843b5e838fc6f6fd/azure_ai_projects-1.0.0b11.tar.gz", hash = "sha256:68a115c48cde7d5f9c29aee61c7fbf0b6de69aecbd1dc749b847a1e1348216b5", size = 133087, upload-time = "2025-05-16T00:33:32.286Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/95/9c04cb5f658c7f856026aa18432e0f0fa254ead2983a3574a0f5558a7234/azure_ai_projects-1.0.0.tar.gz", hash = "sha256:b5f03024ccf0fd543fbe0f5abcc74e45b15eccc1c71ab87fc71c63061d9fd63c", size = 130798, upload-time = "2025-07-31T02:09:27.912Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/2d/5502377ecc07677365a1e86be64d8cb9959eb6e9b605fcc28f1f68d3777a/azure_ai_projects-1.0.0b11-py3-none-any.whl", hash = "sha256:3572f2989627e896ecfebe2fa7326d5b940f920cc581e98809b244af7a38cbf0", size = 130983, upload-time = "2025-05-16T00:33:33.789Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/db/7149cdf71e12d9737f186656176efc94943ead4f205671768c1549593efe/azure_ai_projects-1.0.0-py3-none-any.whl", hash = "sha256:81369ed7a2f84a65864f57d3fa153e16c30f411a1504d334e184fb070165a3fa", size = 115188, upload-time = "2025-07-31T02:09:29.362Z" },
 ]
 
 [[package]]
@@ -1310,11 +1310,11 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=3.7.0" },
-    { name = "azure-ai-agents", specifier = "==1.1.0b1" },
+    { name = "azure-ai-agents", specifier = "==1.2.0b3" },
     { name = "azure-ai-documentintelligence", specifier = "==1.0.2" },
     { name = "azure-ai-evaluation", specifier = "==1.8.0" },
     { name = "azure-ai-evaluation", extras = ["redteam"], marker = "extra == 'dev'", specifier = "==1.8.0" },
-    { name = "azure-ai-projects", specifier = "==1.0.0b11" },
+    { name = "azure-ai-projects", specifier = "==1.0.0" },
     { name = "azure-identity", specifier = "==1.23.0" },
     { name = "azure-search-documents", specifier = "==11.5.3" },
     { name = "beautifulsoup4", specifier = "==4.12.2" },
@@ -1345,7 +1345,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.0.0" },
     { name = "requests", specifier = "==2.32.3" },
     { name = "scrapy", specifier = "==2.13.0" },
-    { name = "semantic-kernel", specifier = "==1.34.0" },
+    { name = "semantic-kernel", specifier = "==1.37.0" },
     { name = "uvicorn", specifier = ">=0.23.0" },
 ]
 provides-extras = ["dev"]
@@ -5972,7 +5972,7 @@ wheels = [
 
 [[package]]
 name = "semantic-kernel"
-version = "1.34.0"
+version = "1.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -5998,9 +5998,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/15/9a4b74fa46beb39a8e66452a6f63a03b1bd701d0eaac4c0eb66db1c51c00/semantic_kernel-1.34.0.tar.gz", hash = "sha256:c656272bcadd6cc3fee6da32de65b48d597d7ab2d5bb4097d4414136b3b5556f", size = 562090, upload-time = "2025-06-25T00:31:22.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/60/c137a9031b26fec98b4e287d224beb3f0553072b8b3944fd4e875ef44b68/semantic_kernel-1.37.0.tar.gz", hash = "sha256:9985b854a3cc50e0a78ca15cde178983f0e4e52dca00786825226cbe14cfd1c9", size = 582909, upload-time = "2025-09-16T00:00:36.587Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/63/f1e7b470aff5947e84ce8c954194e9d96595a9a264375ed4fc957cd685b5/semantic_kernel-1.34.0-py3-none-any.whl", hash = "sha256:c5a6b5a494495421e008a7ece860fd4507557ac83498744d9f2332322fbbc8e3", size = 873179, upload-time = "2025-06-25T00:31:24.443Z" },
+    { url = "https://files.pythonhosted.org/packages/19/44/952e66cf240d6bfc6ce25a7ba366dfbd87b67d8fec07b12812d884029498/semantic_kernel-1.37.0-py3-none-any.whl", hash = "sha256:e26235e28f9716039442e09c1430c7bd9c1dc56b0cc1af576b546f1c0a05298e", size = 893232, upload-time = "2025-09-16T00:00:34.426Z" },
 ]
 
 [[package]]

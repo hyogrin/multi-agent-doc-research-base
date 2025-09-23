@@ -84,7 +84,7 @@ SUPPORTED_LANGUAGES = {
 class ChatSettings:
     """Chat settings for managing user preferences"""
     def __init__(self):
-        self.research = True
+        self.query_rewrite = True
         self.web_search = False
         self.planning = False
         self.ytb_search = False
@@ -555,10 +555,10 @@ async def start():
     # Create settings components
     settings_components = [
         cl.input_widget.Switch(
-            id="research",
-            label=ui_text["research_title"],
+            id="query_rewrite",
+            label=ui_text["query_rewrite_title"],
             initial=True,
-            tooltip=ui_text["research_desc"]
+            tooltip=ui_text["query_rewrite_desc"]
         ),
         cl.input_widget.Switch(
             id="web_search",
@@ -737,7 +737,7 @@ async def safe_update_message(msg: cl.Message) -> bool:
         logger.warning(f"Failed to update message: {str(e)}")
         return False
 
-def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str, dict]:
+def decode_step_content(content: str) -> tuple[str, str, str]:
     """
     Decode step content that may contain code or input data
     Returns: (step_name, code_content, description)
@@ -745,14 +745,7 @@ def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str,
     step_name = content
     code_content = ""
     description = ""
-
-    # Check for step name duplicates
-    if step_name in step_name_counter:
-        step_name_counter[step_name] += 1
-        step_name = f"{step_name}_{step_name_counter[step_name]}"
-    else:
-        step_name_counter[step_name] = 1
-
+    
     logger.info(f"Decoding step content: {content}")
     
     # Check for code content (Base64 encoded)
@@ -778,13 +771,11 @@ def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str,
     
     logger.info(f"Decoded result - step_name: {step_name}, code_length: {len(code_content)}, description: {description}")
     
-    return step_name, code_content, description, step_name_counter
+    return step_name, code_content, description
 
 def clean_response_text(text: str) -> str:
     """Clean response text to prevent unwanted markdown formatting"""
-    text = text.replace("~~", "==")
-    text = text.replace("---", "---\n")
-    return text
+    return text.replace("~~", "==")
 
 def create_api_payload(settings: ChatSettings) -> dict:
     """Create API payload from settings"""
@@ -793,7 +784,7 @@ def create_api_payload(settings: ChatSettings) -> dict:
         "messages": message_history[-10:],
         "max_tokens": settings.max_tokens,
         "temperature": settings.temperature,
-        "research": settings.research,
+        "query_rewrite": settings.query_rewrite,
         "planning": settings.planning,
         "include_web_search": settings.web_search,
         "include_ytb_search": settings.ytb_search,
@@ -816,11 +807,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     if not message or message.strip() == "":
         return
     
-    # Track unique step names to handle duplicates
-    step_name_counter = {}
-
-
-
     # Get conversation history
     message_history = cl.chat_context.to_openai()
     
@@ -838,7 +824,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         "messages": message_history[-10:],
         "max_tokens": settings.max_tokens,
         "temperature": settings.temperature,
-        "research": settings.research,
+        "query_rewrite": settings.query_rewrite,
         "planning": settings.planning,
         "include_web_search": settings.web_search,
         "include_ytb_search": settings.ytb_search,
@@ -851,7 +837,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     }
     
     # Debug logging
-    logger.info(f"API Payload: research={settings.research}, web_search={settings.web_search}, planning={settings.planning},"
+    logger.info(f"API Payload: query_rewrite={settings.query_rewrite}, web_search={settings.web_search}, planning={settings.planning},"
           f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, search_engine={settings.search_engine}, "
           f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
           f"language={settings.language}, verbose={settings.verbose}")
@@ -874,7 +860,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         async with cl.Step(name="API Request", type="run") as step:
             step.input = {
                 "endpoint": api_url,
-                "research": settings.research,
+                "query_rewrite": settings.query_rewrite,
                 "planning": settings.planning,
                 "web_search": settings.web_search,
                 "ytb_search": settings.ytb_search,
@@ -889,7 +875,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
             response = session.post(
                 api_url,
                 json=payload,
-                timeout=(30, 240),
+                timeout=(5, 120),
                 stream=True,
                 headers={"Accept": "text/event-stream"}
             )
@@ -937,7 +923,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         await safe_send_step(current_tool_step)
                                     
                                     # Decode step content (name, code, description)
-                                    step_name, code_content, description, step_name_counter = decode_step_content(step_name_counter, step_content)
+                                    step_name, code_content, description = decode_step_content(step_content)
                                     
                                     # Create new step for each tool operation with appropriate types
                                     step_type = "tool"
@@ -972,9 +958,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                             step_icon = "🎬"                                            
                                         elif ui_text.get("answering", "").lower() in step_name_lower:
                                             step_type = "llm"
-                                            step_icon = "👨‍💻"
-                                        elif ui_text.get("write_research", "").lower() in step_name_lower:
-                                            step_type = "research"
                                             step_icon = "✏️"
                                         elif ui_text.get("search_and_answer", "").lower() in step_name_lower:
                                             step_type = "llm"
@@ -1007,19 +990,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                     
                                     # Store step for later reference
                                     tool_steps[step_name] = current_tool_step
-                                else:
-                                    # Regular content - clean and accumulate and stream
-                                    cleaned_line = clean_response_text(line)  # Clean the line before processing
-                                    
-                                    if accumulated_content:
-                                        # Apply formatting rules for line breaks
-                                        if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
-                                            accumulated_content += "\n\n" + cleaned_line
-                                        else:
-                                            accumulated_content += "\n" + cleaned_line
-                                    else:
-                                        accumulated_content = cleaned_line
-
                             else:
                                 # Regular content - clean and accumulate and stream
                                 cleaned_line = clean_response_text(line)  # Clean the line before processing
@@ -1113,36 +1083,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
-    
-    finally:
-        # Clean up all steps and clear step tracking variables
-        try:
-            # Clear step tracking variables to prevent memory leaks
-            if 'step_name_counter' in locals():
-                step_name_counter.clear()
-                logger.info("Cleared step name counter")
-            
-            # Clear any remaining tool steps references
-            if 'tool_steps' in locals():
-                logger.info(f"Clearing {len(tool_steps)} tool step references")
-                tool_steps.clear()
-            
-            # Force close any remaining active step
-            if 'current_tool_step' in locals() and current_tool_step:
-                try:
-                    current_tool_step.output = "✅ Completed (cleanup)"
-                    await safe_send_step(current_tool_step)
-                    logger.info("Closed remaining active tool step during cleanup")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to close remaining step during cleanup: {cleanup_error}")
-            
-            # Small delay to ensure all async operations complete
-            await asyncio.sleep(0.1)
-            
-            logger.info("Step cleanup completed successfully")
-            
-        except Exception as cleanup_error:
-            logger.error(f"Error during step cleanup: {cleanup_error}")
     
     # Finalize the message safely
     await safe_update_message(msg)
