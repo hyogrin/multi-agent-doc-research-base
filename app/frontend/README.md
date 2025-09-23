@@ -7,14 +7,12 @@ This project implements a simple Gradio user interface to interact with the `/ch
 ```
 frontend
 ├── src
-│   ├── app.py            # Main entry point for the Gradio application
-│   ├── app_chainlit.py   # Main entry point for the chainlit application
+│   ├── app.py            # Main entry point for the web application
 │   └── config.py         # Configuration settings for the application 
 ├── .env.example          # Template for environment variables
 ├── pyproject.toml        # List of dependencies required for the project
 └── README.md             # Documentation for the project
-└── run_app.sh            # Script to run the application (1. chatlit, 2. gradio)
-└── run_chainlit.sh       # Script to run the chainlit application
+└── run_app.sh            # Script to run the application
 ```
 
 ## Development Setup

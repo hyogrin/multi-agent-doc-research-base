@@ -7,4 +7,4 @@ export CHAINLIT_MAX_FILES=10
 
 # Run the Chainlit app
 cd /home/azureuser/cloudfiles/code/doc-inquiry-chatbot/app/frontend
-chainlit run src/app_chainlit.py --host 0.0.0.0 --port 8501
+chainlit run src/app.py --host 0.0.0.0 --port 8501

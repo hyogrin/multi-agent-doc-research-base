@@ -660,10 +660,10 @@ class PlanSearchExecutorSK:
                                             
                                             # 스트리밍으로 답변 출력
                                             if stream:
-                                                yield f"data: ### {LOCALE_MSG['write_research']} for {sub_topic_name}\n\n"                                            
+                                                yield "\n"
+                                                yield f"data: ### {LOCALE_MSG['write_research']} for {sub_topic_name} \n"                                            
                                             
                                                 ttft_time = datetime.now(tz=self.timezone) - start_time
-                                                yield "\n"
                                                 yield f"## {sub_topic_name} \n"
                                                 
                                                 # 긴 답변을 청크 단위로 출력
