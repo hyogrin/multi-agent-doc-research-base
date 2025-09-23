@@ -25,7 +25,7 @@ template: |
 
   ----- Style Guide (for draft_answer_markdown) -----
   - Markdown allowed: headings (#), bold (**), bullet lists (-) only.
-  - No tables, no code blocks, no inline HTML unless absolutely necessary.
+  - no code blocks, no inline HTML unless absolutely necessary.
   - Include 1 emoji if natural (max 2).
   - If a correction is needed, append a single line starting with "정정: ..."
 
@@ -39,7 +39,6 @@ template: |
   {{
     "sub_topic": "{sub_topic}",
     "draft_answer_markdown": "<your drafted answer in markdown, abiding by the style guide>",
-    "key_points": ["<3-7 bullet takeaways for this sub_topic>"],
     "citations": [
       {{
         "claim": "<short claim or section it supports>",

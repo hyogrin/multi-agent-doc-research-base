@@ -125,15 +125,16 @@ class GroupChattingPlugin:
         # Create agents with better instructions
         writer_agent = ChatCompletionAgent(
             name="Writer",
-            description="Research content writer producing structured JSON answers.",
+            description="Research content writer producing structured JSON answers. Do not include any explanations or notes, only the JSON.",
             instructions=writer_instructions + "\n\nIMPORTANT: You must output ONLY valid JSON. No explanatory text before or after.",
             service=self.chat_service,
         )
         reviewer_agent = ChatCompletionAgent(
             name="Reviewer",
-            description="Reviewer improving writer output and producing final JSON.",
+            description="Reviewer improving writer output and producing final JSON. Do not include any explanations or notes, only the JSON.",
             instructions=reviewer_instructions + "\n\nIMPORTANT: You must output ONLY valid JSON. No explanatory text before or after.",
             service=self.chat_service,
+            
         )
 
         # Capture message flow

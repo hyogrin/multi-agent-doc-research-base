@@ -26,10 +26,10 @@ log_filename = f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(log_filename, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
-    ]
+    # handlers=[
+    #     logging.FileHandler(log_filename, encoding='utf-8'),
+    #     logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
+    # ]
 )
 
 # Semantic Kernel의 상세한 로그 억제

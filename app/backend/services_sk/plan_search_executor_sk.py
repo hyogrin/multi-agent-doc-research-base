@@ -154,14 +154,14 @@ class PlanSearchExecutorSK:
             for item in search_queries_data:
                 if isinstance(item, str):
                     # Old format: treat as single sub-topic
-                    sub_topics.append({"sub_topic": "General Search", "queries": [item]})
+                    sub_topics.append({"sub_topic": "research report", "queries": [item]})
                 elif isinstance(item, dict) and 'sub_topic' in item and 'queries' in item:
                     # New format: use as-is
                     sub_topics.append({"sub_topic": item['sub_topic'], "queries": item['queries']})
         
         # Fallback for empty or invalid data
         if not sub_topics:
-            sub_topics = [{"sub_topic": "Research", "queries": [str(search_queries_data)]}]
+            sub_topics = [{"sub_topic": "research report", "queries": [str(search_queries_data)]}]
             
         return sub_topics
     
@@ -306,22 +306,28 @@ class PlanSearchExecutorSK:
                     else:
                         # Fallback
                         search_queries = [enriched_query]
-                        sub_topics = [{"sub_topic": "research report", "queries": [enriched_query]}]
+                        sub_topics = []
+                        sub_topics.append({"sub_topic": "research report", "queries": [enriched_query]})
+
+                        
                         
                     if verbose and stream:
                         plan_data_str = json.dumps(plan_data, ensure_ascii=False, indent=2) if plan_data else "{}"
-                        yield f"data: ### {self.send_step_with_code(LOCALE_MSG['plan_done'], plan_data_str)}\n\n"
+                        yield f"data: {self.send_step_with_code(LOCALE_MSG['plan_done'], plan_data_str)}\n\n"
                 else:
                     # No planning, use enriched query directly
                     search_queries = [enriched_query]
-                    sub_topics = [{"sub_topic": "research report", "queries": [enriched_query]}]
+                    sub_topics = []
+                    sub_topics.append({"sub_topic": "research report", "queries": [enriched_query]})
+                    
 
                     
             except Exception as e:
                 logger.error(f"Error during intent analysis: {e}")
                 # Fallback to original query
                 search_queries = [enriched_query]
-                sub_topics = [{"sub_topic": "research report", "queries": [enriched_query]}]
+                sub_topics = []
+                sub_topics.append({"sub_topic": "research report", "queries": [enriched_query]})
                 if stream:
                     yield f"data: ### Intent analysis failed, using fallback\n\n"
             
@@ -486,7 +492,7 @@ class PlanSearchExecutorSK:
             # AI search context by sub-topic (EXISTING APPROACH - KEEP AS IS)
             if include_ai_search and sub_topics:  
                 try:
-                    sub_topic_ai_contexts = {}  # Store results by sub-topic
+                    sub_topic_ai_search_contexts = {}  # Store results by sub-topic
                     seen_documents = set()  # 중복 문서 방지용
                     MAX_CONTEXT_LENGTH = 400000  # 40만자로 제한
                     MAX_DOCUMENT_LENGTH = 10000   # 문서당 10000자로 제한
@@ -500,7 +506,7 @@ class PlanSearchExecutorSK:
                         if stream:
                             yield f"data: ### {LOCALE_MSG['ai_search_context']} - {sub_topic_name} ({sub_topic_idx+1}/{len(sub_topics)})\n\n"
                         
-                        sub_topic_docs = []
+                        sub_topic_results = []
                         
                         # Search with each query in this sub-topic
                         for query in sub_topic_queries:
@@ -535,7 +541,7 @@ class PlanSearchExecutorSK:
                                                 content = content[:MAX_DOCUMENT_LENGTH] + "... [truncated]"
                                             
                                             if current_total_length + len(content) <= MAX_CONTEXT_LENGTH:
-                                                sub_topic_docs.append(content)
+                                                sub_topic_results.append(content)
                                                 current_total_length += len(content)
                                             else:
                                                 break
@@ -547,25 +553,25 @@ class PlanSearchExecutorSK:
                                 break
                         
                         # Store results for this sub-topic
-                        if sub_topic_docs:
-                            sub_topic_ai_contexts[sub_topic_name] = "\n\n".join(sub_topic_docs)
-                            logger.info(f"Added {len(sub_topic_docs)} AI search documents for sub-topic: {sub_topic_name}")
+                        if sub_topic_results:
+                            sub_topic_ai_search_contexts[sub_topic_name] = "\n\n".join(sub_topic_results)
+                            logger.info(f"Added {len(sub_topic_results)} AI search documents for sub-topic: {sub_topic_name}")
                         
                         if current_total_length >= MAX_CONTEXT_LENGTH:
                             logger.warning(f"Reached maximum context length, stopping at sub-topic: {sub_topic_name}")
                             break
                     
                     # Combine all sub-topic AI search results
-                    if sub_topic_ai_contexts:
+                    if sub_topic_ai_search_contexts:
                         combined_ai_context = ""
-                        for sub_topic_name, context in sub_topic_ai_contexts.items():
+                        for sub_topic_name, context in sub_topic_ai_search_contexts.items():
                             combined_ai_context += f"=== {sub_topic_name} ===\n{context}\n\n"
                         
                         all_contexts.append(f"=== Document Context ===\n{combined_ai_context}")
-                        logger.info(f"Final AI search: {len(sub_topic_ai_contexts)} sub-topics, {current_total_length} total chars")
+                        logger.info(f"Final AI search: {len(sub_topic_ai_search_contexts)} sub-topics, {current_total_length} total chars")
 
-                    if verbose and stream and sub_topic_ai_contexts:
-                        truncated_for_display = str(sub_topic_ai_contexts)[:200] + "... [truncated for display]"
+                    if verbose and stream and sub_topic_ai_search_contexts:
+                        truncated_for_display = str(sub_topic_ai_search_contexts)[:200] + "... [truncated for display]"
                         yield f"data: {self.send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated_for_display)}\n\n"
                 
                 except Exception as e:
@@ -595,6 +601,7 @@ class PlanSearchExecutorSK:
                         
                         # Extract ONLY this sub-topic's context
                         sub_topic_context = ""
+                        sub_topic_group_chat_result = None
                         
                         # Web search context for this sub-topic only
                         if 'sub_topic_web_contexts' in locals() and sub_topic_name in sub_topic_web_contexts:
@@ -605,8 +612,8 @@ class PlanSearchExecutorSK:
                             sub_topic_context += f"=== YouTube Search Results ===\n{sub_topic_youtube_contexts[sub_topic_name]}\n\n"
                         
                         # AI search context for this sub-topic only
-                        if 'sub_topic_ai_contexts' in locals() and sub_topic_name in sub_topic_ai_contexts:
-                            sub_topic_context += f"=== Document Context ===\n{sub_topic_ai_contexts[sub_topic_name]}\n\n"
+                        if 'sub_topic_ai_contexts' in locals() and sub_topic_name in sub_topic_ai_search_contexts:
+                            sub_topic_context += f"=== Document Context ===\n{sub_topic_ai_search_contexts[sub_topic_name]}\n\n"
                         
                         # If no specific context, use fallback
                         if not sub_topic_context.strip():
@@ -653,9 +660,11 @@ class PlanSearchExecutorSK:
                                             
                                             # 스트리밍으로 답변 출력
                                             if stream:
+                                                yield f"data: ### {LOCALE_MSG['write_research']} for {sub_topic_name}\n\n"                                            
+                                            
                                                 ttft_time = datetime.now(tz=self.timezone) - start_time
-
-                                                yield f"\n ## {sub_topic_name} \n"
+                                                yield "\n"
+                                                yield f"## {sub_topic_name} \n"
                                                 
                                                 # 긴 답변을 청크 단위로 출력
                                                 chunk_size = 100
@@ -663,11 +672,6 @@ class PlanSearchExecutorSK:
                                                     chunk = extracted_content[i:i+chunk_size]
                                                     yield chunk
                                                     await asyncio.sleep(0.01)  # 작은 지연으로 스트리밍 효과
-
-                                                yield f"data: ### {LOCALE_MSG['write_research']} for {sub_topic_name}\n\n"                                            
-                                            
-                                                #yield f"data: {self.send_step_with_code(LOCALE_MSG['ai_search_context_done'], extracted_content[:100])}\n\n"
-
 
                                         except Exception as extract_error:
                                             logger.error(f"Failed to extract draft_answer_markdown for {sub_topic_name}: {extract_error}")

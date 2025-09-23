@@ -41,12 +41,9 @@ template: |
   ----- Required JSON Output Shape -----
   {{
     "sub_topic": "{sub_topic}",
+    "revised_answer_markdown": "<corrected/improved version using same style guide>",
     "reviewer_evaluation_score": <integer 1-5>,
     "major_issues": ["<blocking issues that must be fixed>"],
-    "suggested_revisions": [
-      "<actionable rewrite or insertion to improve accuracy/coverage/clarity>"
-    ],
-    "revised_answer_markdown": "<corrected/improved version using same style guide>",
     "ready_to_publish": <true|false>
   }}
 

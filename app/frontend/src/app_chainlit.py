@@ -746,12 +746,7 @@ def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str,
     code_content = ""
     description = ""
 
-    # Check for step name duplicates
-    if step_name in step_name_counter:
-        step_name_counter[step_name] += 1
-        step_name = f"{step_name}_{step_name_counter[step_name]}"
-    else:
-        step_name_counter[step_name] = 1
+    
 
     logger.info(f"Decoding step content: {content}")
     
@@ -775,16 +770,17 @@ def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str,
         step_name = parts[0]
         if len(parts) > 1:
             description = parts[1].strip()
+
+    # Check for step name duplicates
+    if step_name in step_name_counter:
+        step_name_counter[step_name] += 1
+        step_name = f"{step_name}_{step_name_counter[step_name]}"
+    else:
+        step_name_counter[step_name] = 1
     
     logger.info(f"Decoded result - step_name: {step_name}, code_length: {len(code_content)}, description: {description}")
     
     return step_name, code_content, description, step_name_counter
-
-def clean_response_text(text: str) -> str:
-    """Clean response text to prevent unwanted markdown formatting"""
-    text = text.replace("~~", "==")
-    text = text.replace("---", "---\n")
-    return text
 
 def create_api_payload(settings: ChatSettings) -> dict:
     """Create API payload from settings"""
@@ -829,8 +825,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         """Clean response text to prevent unwanted markdown formatting"""
         # Replace ~~ with == to avoid strikethrough
         cleaned_text = text.replace("~~", "==")
-        # You can add more replacements here if needed
-        # cleaned_text = cleaned_text.replace("**", "*")  # Convert bold to italic if needed
         return cleaned_text
     
     # Prepare the API payload
@@ -952,7 +946,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         elif ui_text.get("analyze_complete", "").lower() in step_name_lower:
                                             step_type = "intent"
                                             step_icon = "🧠"
-                                        elif ui_text.get("search_planning", "").lower() in step_name_lower:
+                                        elif ui_text.get("task_planning", "").lower() in step_name_lower:
                                             step_type = "planning"
                                             step_icon = "📋"
                                         elif ui_text.get("plan_done", "").lower() in step_name_lower:
@@ -970,6 +964,12 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         elif ui_text.get("YouTube_done", "").lower() in step_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🎬"                                            
+                                        elif ui_text.get("searching_ai_search", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🏁"
+                                        elif ui_text.get("ai_search_done", "").lower() in step_name_lower:
+                                            step_type = "retrieval"
+                                            step_icon = "🏁"
                                         elif ui_text.get("answering", "").lower() in step_name_lower:
                                             step_type = "llm"
                                             step_icon = "👨‍💻"
@@ -1021,7 +1021,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         accumulated_content = cleaned_line
 
                             else:
-                                # Regular content - clean and accumulate and stream
+                                # # Regular content - clean and accumulate and stream
                                 cleaned_line = clean_response_text(line)  # Clean the line before processing
                                 
                                 if accumulated_content:
@@ -1118,12 +1118,12 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         # Clean up all steps and clear step tracking variables
         try:
             # Clear step tracking variables to prevent memory leaks
-            if 'step_name_counter' in locals():
+            if step_name_counter:
                 step_name_counter.clear()
                 logger.info("Cleared step name counter")
             
             # Clear any remaining tool steps references
-            if 'tool_steps' in locals():
+            if tool_steps:
                 logger.info(f"Clearing {len(tool_steps)} tool step references")
                 tool_steps.clear()
             
@@ -1137,7 +1137,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                     logger.warning(f"Failed to close remaining step during cleanup: {cleanup_error}")
             
             # Small delay to ensure all async operations complete
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.3)
             
             logger.info("Step cleanup completed successfully")
             

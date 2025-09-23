@@ -520,7 +520,7 @@ def main():
             chatbot = gr.Chatbot(
                 elem_id="chatbot",
                 height=800,
-                avatar_images=(None, "public/images/ai_foundry_icon_small.png")
+                avatar_images=(None, "public/images/azure-ai-search.png")
             )
         
         with gr.Row(elem_classes="input-container"):
