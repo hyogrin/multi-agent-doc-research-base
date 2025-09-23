@@ -6,8 +6,11 @@ import json
 import logging
 import base64
 import asyncio
+import threading
+import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from collections import defaultdict
+from typing import Dict, Tuple, Any, List
 from i18n.locale_msg_front import UI_TEXT, EXAMPLE_PROMPTS
 from pathlib import Path
 from io import BytesIO
@@ -232,59 +235,6 @@ async def send_example_questions(upload_id: str):
 
     # 파일명 기반 간단한 도메인 추론 (예: 재무/IR 관련)
     lower_names = " ".join(files).lower()
-    is_finance = any(k in lower_names for k in ["ir", "earnings", "financial", "재무", "실적", "분기", "annual", "report"])
-
-    # TODO: 필요 시 질문 샘플 제공 
-    # display_files = files[:3]
-    # file_line = ""
-    # if display_files:
-    #     if language.startswith("ko"):
-    #         file_line = "📂 대상 파일: " + ", ".join(display_files)
-    #     else:
-    #         file_line = "📂 Files: " + ", ".join(display_files)
-
-    # if language.startswith("ko"):
-    #     header = "💡 **이 문서로 질문 예시**"
-    #     if is_finance:
-    #         examples = [
-    #             "이 보고서의 핵심 재무 지표를 요약해줘",
-    #             "전년 대비 변화율이 큰 항목 3가지를 알려줘",
-    #             "경영진 코멘트(또는 전망) 부분만 뽑아 정리해줘",
-    #             "매출/영업이익/순이익 추이를 표로 만들어줘",
-    #             "위험 요인(Risk factor)이나 경고 신호가 있으면 정리해줘"
-    #         ]
-    #     else:
-    #         examples = [
-    #             "이 문서의 핵심 내용을 5줄로 요약해줘",
-    #             "가장 중요한 인사이트 3가지만 뽑아줘",
-    #             "문서에 등장하는 주요 개념/용어를 설명과 함께 정리해줘",
-    #             "이 문서가 다루는 문제와 제안된 해결책을 정리해줘",
-    #             "추가로 조사하면 좋을 관련 주제 5가지를 제안해줘"
-    #         ]
-    #     follow = "다른 형태의 분석이나 비교가 필요하면 자연어로 자유롭게 질문해주세요."
-    # else:
-    #     header = "💡 **Example Questions for These Documents**"
-    #     if is_finance:
-    #         examples = [
-    #             "Summarize the key financial indicators from this report.",
-    #             "List top 3 metrics with largest YoY change.",
-    #             "Extract and summarize management outlook or guidance.",
-    #             "Create a table of revenue / operating income / net income trends.",
-    #             "Highlight any risk factors or warning signals mentioned."
-    #         ]
-    #     else:
-    #         examples = [
-    #             "Summarize the core points in 5 concise bullet lines.",
-    #             "List the top 3 most important insights with brief rationale.",
-    #             "Extract key concepts/terms and explain each briefly.",
-    #             "Summarize the problem addressed and proposed solution.",
-    #             "Suggest 5 related follow-up research questions."
-    #         ]
-    #     follow = "Feel free to ask for any other analysis or comparison you need."
-
-    # bullets = "\n".join(f"• {q}" for q in examples)
-    # content = f"{header}\n\n{file_line}\n\n{bullets}\n\n{follow}"
-    # await cl.Message(content=content).send()
 
 def start_progress_tracker(upload_id: str, files: List[str], base_message: cl.Message):
     """비동기 폴링 태스크 시작 및 registry 저장"""
@@ -737,50 +687,133 @@ async def safe_update_message(msg: cl.Message) -> bool:
         logger.warning(f"Failed to update message: {str(e)}")
         return False
 
-def decode_step_content(step_name_counter, content: str) -> tuple[str, str, str, dict]:
+# Thread-safe step name counter with cleanup
+class StepNameManager:
+    def __init__(self, cleanup_interval: int = 3600):  # 1 hour cleanup interval
+        self._counter = defaultdict(int)
+        self._timestamps = {}
+        self._lock = threading.Lock()
+        self._cleanup_interval = cleanup_interval
+        self._last_cleanup = time.time()
+    
+    def get_unique_name(self, base_name: str) -> str:
+        """Generate a unique step name with intelligent deduplication."""
+        with self._lock:
+            # Cleanup old entries periodically
+            current_time = time.time()
+            if current_time - self._last_cleanup > self._cleanup_interval:
+                self._cleanup_old_entries(current_time)
+                self._last_cleanup = current_time
+            
+            # Clean the base name for better readability
+            clean_name = self._clean_step_name(base_name)
+            
+            # Check if name already exists
+            if clean_name not in self._counter:
+                self._counter[clean_name] = 1
+                self._timestamps[clean_name] = current_time
+                return clean_name
+            else:
+                # Generate numbered variant
+                self._counter[clean_name] += 1
+                count = self._counter[clean_name]
+                unique_name = f"{clean_name} ({count})"
+                self._timestamps[unique_name] = current_time
+                return unique_name
+    
+    def _clean_step_name(self, name: str) -> str:
+        """Clean and normalize step name for better display."""
+        return name.strip()
+    
+    def _cleanup_old_entries(self, current_time: float):
+        """Remove old entries to prevent memory leaks."""
+        cutoff_time = current_time - (self._cleanup_interval * 2)
+        
+        # Find entries to remove
+        to_remove = []
+        for name, timestamp in self._timestamps.items():
+            if timestamp < cutoff_time:
+                to_remove.append(name)
+        
+        # Remove old entries
+        for name in to_remove:
+            if name in self._counter:
+                del self._counter[name]
+            if name in self._timestamps:
+                del self._timestamps[name]
+
+    # Additional methods for the StepNameManager class
+    def reset_counter(self, name_pattern: str = None):
+        """Reset counters for specific patterns or all if no pattern given."""
+        with self._lock:
+            if name_pattern:
+                to_remove = [name for name in self._counter if name_pattern in name]
+                for name in to_remove:
+                    del self._counter[name]
+                    if name in self._timestamps:
+                        del self._timestamps[name]
+            else:
+                self._counter.clear()
+                self._timestamps.clear()
+    
+    def get_stats(self) -> Dict:
+        """Get statistics about current step names."""
+        with self._lock:
+            return {
+                'total_names': len(self._counter),
+                'most_common': max(self._counter.items(), key=lambda x: x[1]) if self._counter else None,
+                'memory_usage_bytes': sum(len(k.encode()) + len(str(v).encode()) for k, v in self._counter.items())
+            }
+
+# Global instance
+step_name_manager = StepNameManager()
+
+def decode_step_content(content: str) -> Tuple[str, str, str]:
     """
-    Decode step content that may contain code or input data
-    Returns: (step_name, code_content, description)
+    Decode step content and generate unique step name.
+    
+    Returns:
+        tuple: (step_name, code_content, description)
     """
-    step_name = content
-    code_content = ""
-    description = ""
-
-    
-
-    logger.info(f"Decoding step content: {content}")
-    
-    # Check for code content (Base64 encoded)
-    if '#code#' in content:
-        parts = content.split('#code#')
-        step_name = parts[0]
-        if len(parts) > 1:
-            try:
-                encoded_code = parts[1]
-                logger.info(f"Found encoded code: {encoded_code[:50]}...")
-                code_content = base64.b64decode(encoded_code).decode('utf-8')
-                logger.info(f"Decoded code: {code_content[:100]}...")
-            except Exception as e:
-                logger.warning(f"Failed to decode code content: {e}")
-                code_content = parts[1]  # fallback to raw content
-    
-    # Check for input description
-    if '#input#' in step_name:
-        parts = step_name.split('#input#')
-        step_name = parts[0]
-        if len(parts) > 1:
-            description = parts[1].strip()
-
-    # Check for step name duplicates
-    if step_name in step_name_counter:
-        step_name_counter[step_name] += 1
-        step_name = f"{step_name}_{step_name_counter[step_name]}"
-    else:
-        step_name_counter[step_name] = 1
-    
-    logger.info(f"Decoded result - step_name: {step_name}, code_length: {len(code_content)}, description: {description}")
-    
-    return step_name, code_content, description, step_name_counter
+    try:
+        # Parse the content for different components
+        step_name = content.strip()
+        code_content = ""
+        description = ""
+        
+        # Check for #input# tags for descriptions
+        if '#input#' in content:
+            parts = content.split('#input#')
+            if len(parts) >= 2:
+                step_name = parts[0].strip()
+                description = parts[1].strip()
+        
+        # Check for #code# tags for code content
+        if '#code#' in content:
+            parts = content.split('#code#')
+            if len(parts) >= 2:
+                if not step_name or step_name == content.strip():
+                    step_name = parts[0].strip()
+                
+                try:
+                    # Decode base64 encoded code
+                    encoded_code = parts[1].strip()
+                    decoded_bytes = base64.b64decode(encoded_code)
+                    code_content = decoded_bytes.decode('utf-8')
+                except Exception as e:
+                    logger.warning(f"Failed to decode code content: {e}")
+                    code_content = parts[1].strip()  # Use raw content as fallback
+        
+        # Generate unique step name using the manager
+        unique_step_name = step_name_manager.get_unique_name(step_name)
+        
+        return unique_step_name, code_content, description
+        
+    except Exception as e:
+        logger.error(f"Error decoding step content: {e}")
+        # Fallback to basic parsing
+        fallback_name = step_name_manager.get_unique_name(content[:50] + "..." if len(content) > 50 else content)
+        return fallback_name, "", ""
 
 def create_api_payload(settings: ChatSettings) -> dict:
     """Create API payload from settings"""
@@ -814,8 +847,6 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     
     # Track unique step names to handle duplicates
     step_name_counter = {}
-
-
 
     # Get conversation history
     message_history = cl.chat_context.to_openai()
@@ -931,55 +962,55 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         await safe_send_step(current_tool_step)
                                     
                                     # Decode step content (name, code, description)
-                                    step_name, code_content, description, step_name_counter = decode_step_content(step_name_counter, step_content)
+                                    step_name, code_content, description = decode_step_content(step_content)
                                     
                                     # Create new step for each tool operation with appropriate types
                                     step_type = "tool"
                                     step_icon = "🔧"
                                     
-                                    # Determine step type and icon based on step name
-                                    step_name_lower = step_name.lower()
+                                    # Use original content for UI matching, not the unique step name
+                                    original_name_lower = step_content.lower()  # Use original content for matching
                                     try:
-                                        if ui_text.get("analyzing", "").lower() in step_name_lower:
+                                        if ui_text.get("analyzing", "").lower() in original_name_lower:
                                             step_type = "intent"
                                             step_icon = "🧠"
-                                        elif ui_text.get("analyze_complete", "").lower() in step_name_lower:
+                                        elif ui_text.get("analyze_complete", "").lower() in original_name_lower:
                                             step_type = "intent"
                                             step_icon = "🧠"
-                                        elif ui_text.get("task_planning", "").lower() in step_name_lower:
+                                        elif ui_text.get("task_planning", "").lower() in original_name_lower:
                                             step_type = "planning"
                                             step_icon = "📋"
-                                        elif ui_text.get("plan_done", "").lower() in step_name_lower:
+                                        elif ui_text.get("plan_done", "").lower() in original_name_lower:
                                             step_type = "planning"
                                             step_icon = "📋"
-                                        elif ui_text.get("searching", "").lower() in step_name_lower:
+                                        elif ui_text.get("searching", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🌐"
-                                        elif ui_text.get("search_done", "").lower() in step_name_lower:
+                                        elif ui_text.get("search_done", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🌐"                                            
-                                        elif ui_text.get("searching_YouTube", "").lower() in step_name_lower:
+                                        elif ui_text.get("searching_YouTube", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🎬"
-                                        elif ui_text.get("YouTube_done", "").lower() in step_name_lower:
+                                        elif ui_text.get("YouTube_done", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🎬"                                            
-                                        elif ui_text.get("searching_ai_search", "").lower() in step_name_lower:
+                                        elif ui_text.get("searching_ai_search", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🏁"
-                                        elif ui_text.get("ai_search_done", "").lower() in step_name_lower:
+                                        elif ui_text.get("ai_search_done", "").lower() in original_name_lower:
                                             step_type = "retrieval"
                                             step_icon = "🏁"
-                                        elif ui_text.get("answering", "").lower() in step_name_lower:
+                                        elif ui_text.get("answering", "").lower() in original_name_lower:
                                             step_type = "llm"
                                             step_icon = "👨‍💻"
-                                        elif ui_text.get("write_research", "").lower() in step_name_lower:
+                                        elif ui_text.get("write_research", "").lower() in original_name_lower:
                                             step_type = "research"
                                             step_icon = "✏️"
-                                        elif ui_text.get("search_and_answer", "").lower() in step_name_lower:
+                                        elif ui_text.get("search_and_answer", "").lower() in original_name_lower:
                                             step_type = "llm"
                                             step_icon = "✏️"
-                                        elif "context information" in step_name_lower:
+                                        elif "context information" in original_name_lower:
                                             step_type = "tool"
                                             step_icon = "📃"
                                     except KeyError as e:
