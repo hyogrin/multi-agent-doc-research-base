@@ -393,13 +393,13 @@ async def chat_profile():
     return [
         cl.ChatProfile(
             name="Korean",
-            markdown_description="## Doc Research Chat",
+            markdown_description="## Multi-Agent Doc Research",
             icon="/public/images/azure-ai-search.png",
             starters=get_starters_for_language("ko-KR")
         ),
         cl.ChatProfile(
             name="English", 
-            markdown_description="## Doc Research Chat",
+            markdown_description="## Multi-Agent Doc Research",
             icon="/public/images/azure-ai-search.png",
             starters=get_starters_for_language("en-US")
         ),
@@ -509,8 +509,6 @@ async def start():
             step=0.1,
             tooltip="Controls randomness in response generation"
         )
-
-        
     ]
     
     # Send settings to user

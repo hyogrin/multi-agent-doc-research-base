@@ -15,7 +15,7 @@ class ChatSettings:
     def __init__(self):
         self.research = True
         self.web_search = False
-        self.planning = False
+        self.planning = True
         self.ytb_search = False
         self.mcp_server = False
         self.ai_search = True

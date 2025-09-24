@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Test script for the Doc ResearchChat applications
+# Test script for the Multi-Agent Doc Research applications
 
-echo "=== Doc ResearchChat Test Script ==="
+echo "=== Multi-Agent Doc Research Test Script ==="
 echo ""
 
 # Check if Python is available
@@ -50,7 +50,7 @@ else
 fi
 
 
-echo "Starting Doc ResearchChat (Chainlit Version)..."
+echo "Starting Multi-Agent Doc Research (Chainlit Version)..."
 
 # Load environment variables if .env file exists
 if [ -f .env ]; then

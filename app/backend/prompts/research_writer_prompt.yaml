@@ -25,7 +25,7 @@ template: |
 
   ----- Style Guide (for draft_answer_markdown) -----
   - Markdown allowed: headings (#), bold (**), bullet lists (-) only.
-  - no code blocks, no inline HTML unless absolutely necessary.
+  - no table, no code blocks, no inline HTML unless absolutely necessary.
   - Include 1 emoji if natural (max 2).
   - If a correction is needed, append a single line starting with "정정: ..."
 

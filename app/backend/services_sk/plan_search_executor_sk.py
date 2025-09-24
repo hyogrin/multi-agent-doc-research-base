@@ -81,21 +81,11 @@ class PlanSearchExecutorSK:
             bing_api_key=bing_api_key,
             bing_endpoint=bing_endpoint
         )
-        self.youtube_plugin = YouTubePlugin()
-        self.youtube_mcp_plugin = YouTubeMCPPlugin()
-        self.corp_plugin = CORPPlugin()
         self.intent_plan_plugin = IntentPlanPlugin(settings)
-        self.grounding_plugin = GroundingPlugin()
         self.ai_search_plugin = AISearchPlugin()
         self.unified_file_upload_plugin = UnifiedFileUploadPlugin()
         self.group_chatting_plugin = GroupChattingPlugin(settings)
         
-        # Add plugins to kernel
-        self.kernel.add_plugin(self.search_plugin, plugin_name="search")
-        self.kernel.add_plugin(self.grounding_plugin, plugin_name="grounding")
-        self.kernel.add_plugin(self.youtube_plugin, plugin_name="youtube")
-        self.kernel.add_plugin(self.youtube_mcp_plugin, plugin_name="youtube_mcp")
-        self.kernel.add_plugin(self.corp_plugin, plugin_name="corp") # not use anymore
         self.kernel.add_plugin(self.intent_plan_plugin, plugin_name="intent_plan")
         self.kernel.add_plugin(self.ai_search_plugin, plugin_name="ai_search")
         self.kernel.add_plugin(self.unified_file_upload_plugin, plugin_name="file_upload")

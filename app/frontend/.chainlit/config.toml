@@ -56,7 +56,7 @@ enable_session_recovery = true
 
 [UI]
 # Name of the app and chatbot.
-name = "Doc ResearchChat"
+name = "Multi-Agent Doc Research"
 
 # Show the readme while the thread is empty.
 show_readme_as_default = true
