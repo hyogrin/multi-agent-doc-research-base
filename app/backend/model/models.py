@@ -90,6 +90,10 @@ class PlanSearchRequest(BaseModel):
         True,
         description="Include AI search results from uploaded documents"
     )
+    multi_agent_type: str = Field(
+        "vanilla",
+        description="The type of multi-agent system to use (e.g., 'sk', 'vanilla')"
+    )
     verbose: bool = Field(
         True,
         description="Verbose mode for detailed output"

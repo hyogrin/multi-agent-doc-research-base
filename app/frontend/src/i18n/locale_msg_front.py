@@ -4,8 +4,6 @@ UI_TEXT = {
     "en-US": {
         "title": "# Microsoft Plan and Search Chat",
         "select_agent_mode": "### Select Agentic Mode",
-        "research_title": "#### Research",
-        "research_desc": "Deep research using multi-agent group chat",
         "web_search_title": "#### Web Search",
         "web_search_desc": "GPT includes asynchronous web search results.",
         "planning_title": "#### Plan & Execute",
@@ -16,7 +14,11 @@ UI_TEXT = {
         "mcp_desc": "MCP Server is used for YouTube searches.",
         "ai_search_title": "#### enable AI Search",
         "ai_search_desc": "AI Search is used for processing documents.",
-        "verbose_title": "#### Verbose Mode", 
+        "research_title": "#### Research",
+        "research_desc": "Deep research using multi-agent group chat",
+        "multi_agent_type_title": "#### Multi-Agent Type",
+        "multi_agent_type_desc": "Multi-agent processing method",
+        "verbose_title": "#### Verbose Mode",
         "verbose_desc": "GPT will provide more detailed responses",
         "search_engine_title": "#### Search Engine",
         "search_engine_desc": "Search engines use crawling except for Grounding Gen",
@@ -38,10 +40,13 @@ UI_TEXT = {
         "YouTube_done": "YouTube Search complete.",
         "searching_ai_search": "Searching AI Search...",
         "ai_search_done": "AI Search complete.",
+        "ai_search_context": "Processing AI Search docs",
+        "ai_search_context_done": "AI Search docs processing complete",
         "answering": "Generating answer...",
+        "start_research": "Starting research...",
+        "organize_research": "Organizing research...",
         "write_research": "Writing research result...",
-        "review_research": "Reviewing research ...",
-        "search_and_answer": "Searching and generating answer...",
+        "review_research": "Reviewing research ..."
     },
     "ko-KR": {
         "title": "# Microsoft Plan and Search Chat",
@@ -58,6 +63,8 @@ UI_TEXT = {
         "mcp_desc": "YouTube 검색 시 MCP서버를 사용합니다",
         "ai_search_title": "#### AI Search 사용여부",
         "ai_search_desc": "문서 처리를 위해 AI Search를 사용합니다",
+        "multi_agent_type_title": "#### 멀티 에이전트 검색 방법",
+        "multi_agent_type_desc": "멀티 에이전트 검색 처리 방법",
         "verbose_title": "#### 상세 모드",
         "verbose_desc": "GPT가 더 자세한 응답을 제공합니다",
         "search_engine_title": "#### 검색 엔진",
@@ -79,77 +86,66 @@ UI_TEXT = {
         "searching_YouTube": "YouTube에서 검색 중...",
         "YouTube_done": "YouTube 검색 완료.",
         "searching_ai_search": "AI Search 검색 중...",
+        "ai_search_context": "AI Search 문서 처리 중...",
+        "ai_search_context_done": "AI Search 문서 처리 완료",
         "ai_search_done": "AI Search 검색 완료.",
         "answering": "답변 생성 중...",
+        "start_research": "리서치 시작...",
+        "organize_research": "리서치 정리 중...",
         "write_research": "리서치 결과 작성중...",
         "review_research": "리서치 결과 검토중...",
-        "search_and_answer": "웹 검색 및 답변 생성 중...",
     }
 }
 
 EXAMPLE_PROMPTS = {
     "en-US": {
-        "question_Microsoft": {
-            "title": "Microsoft General Questions",
-            "description": "Have a general question about Microsoft",
-            "prompt": "How is the Microsoft stock mood these days?"
+        "upload": {
+            "title": "Upload Document",
+            "description": "Upload your own document to report and ask questions",
+            "prompt": "upload documents"
         },
-        "product_info": {
-            "title": "Questions about Product", 
-            "description": "Ask questions about various Microsoft products",
-            "prompt": "Can you recommend a Surface model other than 12inches from Microsoft?"
+        "report": {
+            "title": "Generate Report", 
+            "description": "Generate a report based on the uploaded document",
+            "prompt": """
+            You are an AI research analyst. Based on the following outline, generate a high-quality analysis of recent AI industry trends across Policy & Regulation, Business & Industry, 
+            and Technology & Research. The response will be used as a document for investors and executives, 
+            and must adhere to these guidelines:
+
+            [Writing Guidelines]
+            Use only the information provided in the given Context. Do not include any external knowledge or prior assumptions.
+            The total length should be at least 3,000 characters, with content that is dense, refined, and free of redundancy or unnecessary elaboration.
+            Ensure the writing is well-structured, analytical, and professional in tone.
+            """
         },
-        "recommendation": {
-            "title": "Recommendation",
-            "description": "Ask recommendation for a product line", 
-            "prompt": "Can you recommend a good office software for my parents?"
-        },
-        "comparison": {
-            "title": "Comparison",
-            "description": "Ask for a comparison between two different models",
-            "prompt": "Can you compare Samsung Galaxy Book and Microsoft Surface Pro?"
-        },
-        "support_questions": {
-            "title": "Support Questions",
-            "description": "Ask for support-related inquiries",
-            "prompt": "What is the warranty period for Microsoft products?"
-        },
-        "tools": {
-            "title": "Tool (Time & Weather)",
-            "description": "Ask time and weather information from external APIs",
-            "prompt": "What time is it in New York?"
+        "ask_questions": {
+            "title": "Ask questions about document",
+            "description": "Ask questions about the specific document",
+            "prompt": "What is the summary of the document?"
         }
     },
     "ko-KR": {
-        "question_Microsoft": {
-            "title": "마이크로소프트 일반 질문",
-            "description": "마이크로소프트에 대한 일반적인 질문하기",
-            "prompt": "마이크로소프트 주식 분위기가 요즘 어때?"
+        "upload": {
+            "title": "문서 업로드",
+            "description": "보고 및 질문을 위해 자신의 문서를 업로드합니다.",
+            "prompt": "문서 업로드"
         },
-        "product_info": {
-            "title": "제품 질문",
-            "description": "다양한 마이크로소프트 제품에 대한 질문하기",
-            "prompt": "마이크로소프트 제품 중 12인치가 아닌 서피스 모델 추천해줘"
+        "report": {
+            "title": "보고서 생성",
+            "description": "업로드된 문서를 기반으로 보고서를 생성합니다.",
+            "prompt": """
+            당신은 AI 리서치 애널리스트입니다. 아래의 목차 구조에 따라 정책·법제, 기업·산업, 기술·연구 분야별 최근 AI 산업 동향에 대한 고품질 분석을 작성하십시오. 
+            이 분석은 투자자와 경영진을 위한 문서로 활용되며, 다음 작성 지침을 반드시 준수해야 합니다.
+            [작성 지침]
+            제공된 Context 정보만 활용하며, 외부 지식이나 사전 정보는 절대 포함하지 마십시오.
+            전체 분량은 3,000자 이상을 기준으로 하며, 반복적이거나 불필요하게 장황한 표현은 배제하고 정제된 밀도 높은 문장으로 구성하십시오.
+            글은 체계적이고 분석적이며, 전문적인 톤으로 작성하십시오.
+            """
         },
-        "recommendation": {
-            "title": "추천",
-            "description": "제품 라인에 대한 추천 요청하기",
-            "prompt": "부모님께 좋은 오피스 소프트웨어를 추천해줄 수 있어?"
-        },
-        "comparison": {
-            "title": "비교",
-            "description": "두 가지 다른 모델 간의 비교 요청하기",
-            "prompt": "삼성노트북과 마이크로소프트 서피스를 비교해줄 수 있어?"
-        },
-        "support_questions": {
-            "title": "지원 질문",
-            "description": "지원 관련 문의하기",
-            "prompt": "마이크로소프트 제품의 보증 기간은 어떻게 되나요?"
-        },
-        "tools": {
-            "title": "도구 (시간 및 날씨)",
-            "description": "외부 API에서 시간 및 날씨 정보 요청하기",
-            "prompt": "뉴욕은 지금 몇 시야?"
+        "ask_questions": {
+            "title": "문서에 대한 질문하기",
+            "description": "특정 문서에 대한 질문하기",
+            "prompt": "문서의 요약은 무엇입니까?"
         }
-    }
+    },
 }

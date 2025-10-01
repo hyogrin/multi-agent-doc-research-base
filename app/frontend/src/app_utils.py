@@ -19,6 +19,7 @@ class ChatSettings:
         self.ytb_search = False
         self.mcp_server = False
         self.ai_search = True
+        self.multi_agent_type = "sk" # sk, vanilla
         self.verbose = True
         self.search_engine = "grounding_bing"  # Default value
         self.language = "ko-KR"
@@ -204,6 +205,7 @@ def create_api_payload(settings: ChatSettings) -> dict:
         "include_ytb_search": settings.ytb_search,
         "include_mcp_server": settings.mcp_server,
         "include_ai_search": settings.ai_search,
+        "multi_agent_type": settings.multi_agent_type,
         "search_engine": settings.search_engine,
         "stream": True,
         "locale": settings.language,

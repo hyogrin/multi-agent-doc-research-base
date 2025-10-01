@@ -14,6 +14,7 @@ from typing import Dict, Tuple, Any, List
 from i18n.locale_msg_front import UI_TEXT, EXAMPLE_PROMPTS
 from pathlib import Path
 from io import BytesIO
+from enum import Enum
 
 # Import classes and utilities from app_utils
 from app_utils import (
@@ -50,6 +51,12 @@ active_uploads = {}  # { upload_id: { files: [...], message: cl.Message, task: a
 SEARCH_ENGINES = {
     "Bing Search": "bing_search_crawling",
     "Grounding Gen": "grounding_bing"
+}
+
+# Define the multi_agent_type
+MULTI_AGENT_TYPES = {
+    "SK": "sk",
+    "Vanilla": "vanilla"
 }
 
 # Internationalization constants
@@ -111,30 +118,21 @@ def get_starters_for_language(language: str):
     """Get starters for a specific language"""
     starters = []
     
-    categories = ["question_Microsoft", "product_info", "recommendation", "comparison", "support_questions", "tools"]
+    categories = ["upload", "report", "ask_questions"]
     logger.info(f"Getting starters for language: {language}")
     logger.info(f"Available categories in EXAMPLE_PROMPTS: {list(EXAMPLE_PROMPTS.get(language, {}).keys())}")
     
     for category in categories:
         if category in EXAMPLE_PROMPTS[language]:
-            if category == "question_Microsoft":
-                emoji="📈" 
-                image="/public/images/1f4c8_color.png"
-            elif category == "product_info":
-                emoji="✅"
-                image="/public/images/2705_flat.png"
-            elif category == "recommendation":
+            if category == "upload":
+                emoji="⤴️"
+                image="/public/images/2934_color.png"
+            elif category == "report":
                 emoji="💡"
                 image="/public/images/1f4a1_color.png"
-            elif category == "comparison":
-                emoji="📚"
-                image="/public/images/1f4da_color.png"
-            elif category == "support_questions":
-                emoji="👨‍💻"
-                image="/public/images/1f468-1f4bb_flat.png"
-            elif category == "tools":
-                emoji="🛠"
-                image="/public/images/1f6e0_color.png"
+            elif category == "ask_questions":
+                emoji="❓"
+                image="/public/images/2753_color.png"
                         
             starter = cl.Starter(
                 label=get_starter_label(language, category),
@@ -472,6 +470,13 @@ async def start():
             initial=True,
             tooltip=ui_text["ai_search_desc"]
         ),
+        cl.input_widget.Select(
+            id="multi_agent_type",
+            label=ui_text["multi_agent_type_title"],
+            initial_index=0,
+            values=list(MULTI_AGENT_TYPES.keys()),
+            tooltip=ui_text["multi_agent_type_desc"]
+        ),
         cl.input_widget.Switch(
             id="verbose",
             label=ui_text["verbose_title"],
@@ -755,6 +760,7 @@ def create_api_payload(settings: ChatSettings) -> dict:
         "include_ytb_search": settings.ytb_search,
         "include_mcp_server": settings.mcp_server,
         "include_ai_search": settings.ai_search,
+        "multi_agent_type": settings.multi_agent_type,
         "search_engine": settings.search_engine,
         "stream": True,
         "locale": settings.language,
@@ -787,7 +793,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     
     # Debug logging
     logger.info(f"API Payload: research={settings.research}, web_search={settings.web_search}, planning={settings.planning},"
-          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, search_engine={settings.search_engine}, "
+          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, multi_agent_type={settings.multi_agent_type}, search_engine={settings.search_engine}, "
           f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
           f"language={settings.language}, verbose={settings.verbose}")
     
@@ -815,6 +821,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                 "ytb_search": settings.ytb_search,
                 "mcp_server": settings.mcp_server,
                 "ai_search": settings.ai_search,
+                "multi_agent_type": settings.multi_agent_type,
                 "search_engine": settings.search_engine,
                 "verbose": settings.verbose,
                 "locale": settings.language,
@@ -880,45 +887,52 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                     
                                     # Use original content for UI matching, not the unique step name
                                     original_name_lower = step_content.lower()
+                                    logger.info(f"Creating tool step: {step_name}, original content: {step_content}")
                                     try:
-                                        if ui_text.get("analyzing", "").lower() in original_name_lower:
+                                        if original_name_lower.startswith(ui_text.get("analyzing").lower()):
                                             step_type = "intent"
                                             step_icon = "🧠"
-                                        elif ui_text.get("analyze_complete", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("analyze_complete").lower()):
                                             step_type = "intent"
                                             step_icon = "🧠"
-                                        elif ui_text.get("task_planning", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("task_planning").lower()):
                                             step_type = "planning"
                                             step_icon = "📋"
-                                        elif ui_text.get("plan_done", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("plan_done").lower()):
                                             step_type = "planning"
                                             step_icon = "📋"
-                                        elif ui_text.get("searching", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("searching").lower()):
                                             step_type = "retrieval"
                                             step_icon = "🌐"
-                                        elif ui_text.get("search_done", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("search_done").lower()):
                                             step_type = "retrieval"
                                             step_icon = "🌐"                                            
-                                        elif ui_text.get("searching_YouTube", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("searching_YouTube").lower()):
                                             step_type = "retrieval"
                                             step_icon = "🎬"
-                                        elif ui_text.get("YouTube_done", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("YouTube_done").lower()):
                                             step_type = "retrieval"
-                                            step_icon = "🎬"                                            
-                                        elif ui_text.get("searching_ai_search", "").lower() in original_name_lower:
-                                            step_type = "retrieval"
-                                            step_icon = "🏁"
-                                        elif ui_text.get("ai_search_done", "").lower() in original_name_lower:
+                                            step_icon = "🎬"
+                                        elif original_name_lower.startswith(ui_text.get("searching_ai_search").lower()):
                                             step_type = "retrieval"
                                             step_icon = "🏁"
-                                        elif ui_text.get("answering", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("ai_search_context_done").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🏁"
+                                        elif original_name_lower.startswith(ui_text.get("answering").lower()):
                                             step_type = "llm"
                                             step_icon = "👨‍💻"
-                                        elif ui_text.get("write_research", "").lower() in original_name_lower:
+                                        elif original_name_lower.startswith(ui_text.get("start_research").lower()):
                                             step_type = "research"
                                             step_icon = "✏️"
-                                        elif ui_text.get("search_and_answer", "").lower() in original_name_lower:
-                                            step_type = "llm"
+                                        elif original_name_lower.startswith(ui_text.get("organize_research").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif original_name_lower.startswith(ui_text.get("write_research").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif original_name_lower.startswith(ui_text.get("review_research").lower()):
+                                            step_type = "research"
                                             step_icon = "✏️"
                                         elif "context information" in original_name_lower:
                                             step_type = "tool"
@@ -1123,21 +1137,15 @@ async def on_show_starters_action(action: cl.Action):
     # Send starters as a message with action buttons
     starters_message = "📋 **Quick Start Options:**\n\n"
     actions = []
-    
+
     for i, starter in enumerate(starters):
         # Get emoji from category mapping
         if i == 0:  # question_Microsoft
-            emoji = "📈"
+            emoji = "⤴️"
         elif i == 1:  # product_info
-            emoji = "✅"
-        elif i == 2:  # recommendation
             emoji = "💡"
-        elif i == 3:  # comparison
-            emoji = "📚"
-        elif i == 4:  # support_questions
-            emoji = "👨‍💻"
-        elif i == 5:  # tools
-            emoji = "🛠️"
+        elif i == 2:  # recommendation
+            emoji = "❓"
         else:
             emoji = "🤖"
             
@@ -1157,9 +1165,6 @@ async def on_show_starters_action(action: cl.Action):
 @cl.action_callback("starter_0")
 @cl.action_callback("starter_1")
 @cl.action_callback("starter_2")
-@cl.action_callback("starter_3")
-@cl.action_callback("starter_4")
-@cl.action_callback("starter_5")
 async def on_starter_action(action: cl.Action):
     """Handle starter action clicks"""
     # Extract message from payload dictionary

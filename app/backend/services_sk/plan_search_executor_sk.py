@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional, Dict, Any
+from typing import AsyncGenerator, List, Optional, Dict, Any, Callable, Awaitable
 import asyncio
 import pytz
 from config.config import Settings
@@ -21,12 +21,14 @@ from semantic_kernel.functions.kernel_arguments import KernelArguments
 from .search_plugin import SearchPlugin
 from services_sk.youtube_plugin import YouTubePlugin
 from services_sk.youtube_mcp_plugin import YouTubeMCPPlugin
-from .corp_plugin import CORPPlugin
 from .intent_plan_plugin import IntentPlanPlugin
 from .grounding_plugin import GroundingPlugin
 from .ai_search_plugin import AISearchPlugin
 from .unified_file_upload_plugin import UnifiedFileUploadPlugin
 from .group_chatting_plugin import GroupChattingPlugin
+from .multi_agent_plugin import MultiAgentPlugin
+
+
 logger = logging.getLogger(__name__)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -85,12 +87,14 @@ class PlanSearchExecutorSK:
         self.ai_search_plugin = AISearchPlugin()
         self.unified_file_upload_plugin = UnifiedFileUploadPlugin()
         self.group_chatting_plugin = GroupChattingPlugin(settings)
+        self.multi_agent_plugin = MultiAgentPlugin(settings)
         
         self.kernel.add_plugin(self.intent_plan_plugin, plugin_name="intent_plan")
         self.kernel.add_plugin(self.ai_search_plugin, plugin_name="ai_search")
         self.kernel.add_plugin(self.unified_file_upload_plugin, plugin_name="file_upload")
-        self.kernel.add_plugin(self.group_chatting_plugin, plugin_name="group_chat")
-        
+        self.kernel.add_plugin(self.group_chatting_plugin, plugin_name="sk_group_chat")
+        self.kernel.add_plugin(self.multi_agent_plugin, plugin_name="vanilla_multi_agent")
+
         self.deployment_name = settings.AZURE_OPENAI_DEPLOYMENT_NAME
         self.query_deployment_name = settings.AZURE_OPENAI_QUERY_DEPLOYMENT_NAME
         self.planner_max_plans = settings.PLANNER_MAX_PLANS
@@ -170,6 +174,7 @@ class PlanSearchExecutorSK:
         include_ytb_search: bool = True,
         include_mcp_server: bool = True,
         include_ai_search: bool = True,
+        multi_agent_type: str = "vanilla",
         verbose: Optional[bool] = False
     ) -> AsyncGenerator[str, None]:
         """
@@ -189,6 +194,7 @@ class PlanSearchExecutorSK:
             include_ytb_search: Whether to include YouTube search results
             include_mcp_server: Whether to include MCP server integration
             include_ai_search: Whether to include AI search results from uploaded documents
+            multi_agent_type: The type of multi-agent system to use
             verbose: Whether to include verbose context information,
             
         """
@@ -494,7 +500,7 @@ class PlanSearchExecutorSK:
                         sub_topic_queries = sub_topic_data['queries']
                         
                         if stream:
-                            yield f"data: ### {LOCALE_MSG['ai_search_context']} - {sub_topic_name} ({sub_topic_idx+1}/{len(sub_topics)})\n\n"
+                            yield f"data: ### {LOCALE_MSG['searching_ai_search']} - {sub_topic_name} ({sub_topic_idx+1}/{len(sub_topics)})\n\n"
                         
                         sub_topic_results = []
                         
@@ -584,6 +590,9 @@ class PlanSearchExecutorSK:
                 # Use group chat for research intent
                 try:
                     
+                    yield f"data: ### {LOCALE_MSG['start_research']}\n"                                            
+                                            
+
                     # Process each sub-topic SEPARATELY with its own context
                     for sub_topic_idx, sub_topic_data in enumerate(sub_topics):
                         sub_topic_name = sub_topic_data['sub_topic']
@@ -609,78 +618,148 @@ class PlanSearchExecutorSK:
                         if not sub_topic_context.strip():
                             sub_topic_context = "No specific context available for this sub-topic."
                         
-                        # Execute group chat with ONLY this sub-topic's context
-                        group_chat_function = self.kernel.get_function("group_chat", "group_chat")
-                        sub_topic_group_chat_result = await group_chat_function.invoke(
-                            self.kernel,
-                            KernelArguments(
-                                sub_topic=sub_topic_name,
-                                question=", ".join(sub_topic_queries),  # Convert list to string
-                                sub_topic_contexts=sub_topic_context,  # Only this sub-topic's context
-                                locale=locale,
-                                max_rounds="1",
-                                max_tokens=str(40000),
-                                current_date=current_date
-                            )
-                        )
                         
-                        # Store result for this sub-topic
-                        if sub_topic_group_chat_result and sub_topic_group_chat_result.value:
-                            # logger.info(f"Group chat result for {sub_topic_name}: {sub_topic_group_chat_result.value[:200]}...")
-                            # JSON 문자열을 파싱해서 실제 답변 추출
+                        sub_topic_group_chat_result_str = None
+                        yield f"data: ### {LOCALE_MSG['organize_research']} for {sub_topic_name} \n"
+
+                        if multi_agent_type == "sk":
+                            
+                            # Execute group chat with ONLY this sub-topic's context
+                            group_chat_function = self.kernel.get_function("sk_group_chat", "group_chat")
+                            sub_topic_group_chat_result = await group_chat_function.invoke(
+                                self.kernel,
+                                KernelArguments(
+                                    sub_topic=sub_topic_name,
+                                    question=", ".join(sub_topic_queries),  # Convert list to string
+                                    sub_topic_contexts=sub_topic_context,  # Only this sub-topic's context
+                                    locale=locale,
+                                    max_rounds="1",
+                                    max_tokens=str(40000),
+                                    current_date=current_date
+                                )
+                            )
+                            sub_topic_group_chat_result_str = sub_topic_group_chat_result.value
+                        else:
+                            # Prepare tasks using the plugin's method
+                            tasks = self.multi_agent_plugin._normalize_tasks(
+                                question=", ".join(sub_topic_queries),
+                                sub_topic=sub_topic_name,
+                                sub_topics=None,
+                                sub_topic_contexts=sub_topic_context,
+                                contexts=None,
+                                max_tokens=40000,
+                            )
+
+                            
+                            # Always use kernel function (simpler approach)
+                            if stream:
+                                yield f"data: ###📝 Starting writer phase...\n\n"
+                            
+                            # Call multi-agent plugin
+                            multi_agent_function = self.kernel.get_function("vanilla_multi_agent", "run_multi_agent")
+                            sub_topic_group_chat_result = await multi_agent_function.invoke(
+                                self.kernel,
+                                KernelArguments(
+                                    sub_topic=sub_topic_name,
+                                    question=", ".join(sub_topic_queries),
+                                    sub_topic_contexts=sub_topic_context,
+                                    locale=locale,
+                                    max_rounds="4",
+                                    max_tokens=str(40000),
+                                    current_date=current_date,
+                                )
+                            )
+                            sub_topic_group_chat_result_str = sub_topic_group_chat_result.value
+                            
+                        # Parse and stream results
+                        if sub_topic_group_chat_result_str:
                             try:
-                                extracted_content = []
-                                group_chat_data = json.loads(sub_topic_group_chat_result.value)
-                                logger.info(f"Parsed group chat data status: {group_chat_data.get('status')}")
+                                group_chat_data = json.loads(sub_topic_group_chat_result_str)
+                                logger.info(f"Multi-agent result for {sub_topic_name}: status={group_chat_data.get('status')}")
                                 
-                                if group_chat_data.get("status") == "success":
-                                    final_answer = group_chat_data.get("final_answer", "")
+                                # Get sub-topic results for detailed info
+                                sub_results = group_chat_data.get("sub_topic_results", [])
+                                
+                                # Stream writer progress
+                                if stream:
+                                    for idx, result in enumerate(sub_results, 1):
+                                        topic = result.get("sub_topic", "Unknown")
+                                        writer_status = result.get("writer", {}).get("status")
+                                        if writer_status == "success":
+                                            yield f"data: ### ✅ Writer [{idx}/{len(sub_results)}]: {topic}\n\n"
+                                        else:
+                                            yield f"data: ### ❌ Writer [{idx}/{len(sub_results)}]: {topic} (failed)\n\n"
                                     
-                                    # JSON 형태의 답변인지 확인하고 draft_answer_markdown 추출
-                                    if final_answer.strip().startswith('{') and ("draft_answer_markdown" in final_answer or "revised_answer_markdown" in final_answer):
-                                        try:
-                                            answer_json = json.loads(final_answer)
-                                            
-                                            if "revised_answer" in answer_json:
-                                                extracted_content = answer_json["revised_answer_markdown"]
-                                                logger.info(f"Extracted revised_answer_markdown: {len(extracted_content)} chars")
-                                            else:
-                                                extracted_content = answer_json.get("draft_answer_markdown", final_answer)
-                                                logger.info(f"Extracted draft_answer_markdown: {len(extracted_content)} chars")
-                                            
-                                            # 스트리밍으로 답변 출력
-                                            if stream:
-                                                yield "\n"
-                                                yield f"data: ### {LOCALE_MSG['write_research']} for {sub_topic_name} \n"                                            
-                                            
-                                                ttft_time = datetime.now(tz=self.timezone) - start_time
-                                                yield f"## {sub_topic_name} \n"
-                                                
-                                                # 긴 답변을 청크 단위로 출력
-                                                chunk_size = 100
-                                                for i in range(0, len(extracted_content), chunk_size):
-                                                    chunk = extracted_content[i:i+chunk_size]
-                                                    yield chunk
-                                                    await asyncio.sleep(0.01)  # 작은 지연으로 스트리밍 효과
-
-                                        except Exception as extract_error:
-                                            logger.error(f"Failed to extract draft_answer_markdown for {sub_topic_name}: {extract_error}")
-                                            # JSON 파싱 실패 시 원본 사용
-
-                                    # if verbose and stream:
-                                    #     truncated_for_display = str(sub_topic_ai_contexts)[:200] + "... [truncated for display]"
-                                    #     yield f"data: {self.send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated_for_display)}\n\n"
+                                    yield f"data: 🔍 Starting reviewer phase...\n\n"
+                                    
+                                    # Stream reviewer progress
+                                    for idx, result in enumerate(sub_results, 1):
+                                        topic = result.get("sub_topic", "Unknown")
+                                        review = result.get("review", {})
+                                        review_status = review.get("status")
+                                        
+                                        if review_status == "skipped":
+                                            yield f"data: ⏭️  Reviewer [{idx}/{len(sub_results)}]: {topic} (skipped - writer failed)\n\n"
+                                        elif review_status == "success":
+                                            ready = review.get("ready_to_publish", False)
+                                            score = review.get("parsed", {}).get("reviewer_evaluation_score", "N/A")
+                                            status_icon = "✅" if ready else "⚠️"
+                                            yield f"data: ### {status_icon} Reviewer [{idx}/{len(sub_results)}]: {topic} (score: {score})\n\n"
+                                        else:
+                                            yield f"data: ### ❌ Reviewer [{idx}/{len(sub_results)}]: {topic} (error)\n\n"
+                                
+                                # Check overall status
+                                all_ready = group_chat_data.get("all_ready_to_publish", False)
+                                if stream:
+                                    if all_ready:
+                                        yield f"data: ###✅ All sub-topics ready to publish!\n\n"
+                                    else:
+                                        yield f"data: ###⚠️ Review completed with some concerns\n\n"
+                                
+                                # Stream final answers (always, regardless of ready_to_publish)
+                                final_answer_str = group_chat_data.get("final_answer", "")
+                                if final_answer_str and stream:
+                                    try:
+                                        final_answer_data = json.loads(final_answer_str)
+                                        answers = final_answer_data.get("answers", {})
+                                        ttft_time = datetime.now(tz=self.timezone) - start_time
                 
+                                        for topic, answer in answers.items():
+                                            # Get detailed info for this topic
+                                            topic_result = next((r for r in sub_results if r.get("sub_topic") == topic), None)
+                                            
+                                            ready_icon = "✅"
+                                            score = "N/A"
+                                            if topic_result:
+                                                ready_to_publish = topic_result.get("review", {}).get("ready_to_publish", False)
+                                                ready_icon = "✅" if ready_to_publish else "⚠️"
+                                                score = topic_result.get("review", {}).get("parsed", {}).get("reviewer_evaluation_score", "N/A")
+                                            
+                                            yield f"\n"
+                                            yield f"data: ### {LOCALE_MSG.get('write_research', 'Writing Answer')} for {topic} {ready_icon} (Score: {score})\n\n"
+                                            yield f"## {topic}\n\n"
 
-                                    
+                                            
+                                            # Stream answer in chunks
+                                            chunk_size = 100
+                                            for i in range(0, len(answer), chunk_size):
+                                                chunk = answer[i:i+chunk_size]
+                                                yield chunk
+                                                await asyncio.sleep(0.01)
+                                            yield "\n\n"
+                                    except json.JSONDecodeError as je:
+                                        logger.error(f"Failed to parse final_answer for {sub_topic_name}: {je}")
+                                        if stream:
+                                            yield f"data: ❌ Error parsing final answer\n\n"
 
                             except json.JSONDecodeError as e:
-                                logger.warning(f"Failed to parse group chat JSON for {sub_topic_name}: {e}")
-                                # JSON이 아닌 경우 원본 텍스트 사용
-                                
+                                logger.error(f"Failed to parse multi-agent JSON for {sub_topic_name}: {e}")
+                                if stream:
+                                    yield f"data: ❌ Error parsing results for {sub_topic_name}\n\n"
                         else:
-                            logger.info(f"Group chat result for {sub_topic_name}: no data in sub_topic_group_chat_result...")
-                            yield f"Group chat result for {sub_topic_name}: no data in sub_topic_group_chat_result... \n\n"
+                            logger.warning(f"No multi-agent result for {sub_topic_name}")
+                            if stream:
+                                yield f"data: ⚠️ No result generated for {sub_topic_name}\n\n"
 
                 except Exception as e:
                     logger.error(f"Error during group chat for research: {str(e)}")
@@ -705,16 +784,12 @@ class PlanSearchExecutorSK:
                     temperature=temperature,
                     stream=stream
                 )
+                ttft_time = datetime.now(tz=self.timezone) - start_time
                 
-                if stream:
-                    ttft_time = datetime.now(tz=self.timezone) - start_time
-                    async for chunk in response:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            yield f"{chunk.choices[0].delta.content}"
-                else:
-                    ttft_time = datetime.now(tz=self.timezone) - start_time
-                    message_content = response.choices[0].message.content
-                    yield message_content
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield f"{chunk.choices[0].delta.content}"
+            
             
             yield "\n"  # clear previous md formatting
             
