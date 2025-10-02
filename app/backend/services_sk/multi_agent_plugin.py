@@ -111,7 +111,7 @@ class MultiAgentPlugin:
         sub_topics: Optional[str] = None,
         sub_topic_contexts: Optional[str] = None,
         contexts: Optional[str] = None,
-        locale: str = "ko-KR",
+        locale: str = "en-US",
         max_tokens: Union[str, int] = 8000,
         current_date: Optional[str] = None,
         parallel: Union[str, bool, None] = None,

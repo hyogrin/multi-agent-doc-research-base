@@ -68,7 +68,7 @@ class ChatSettings:
         self.multi_agent_type = "sk" # sk, vanilla
         self.verbose = True
         self.search_engine = "grounding_bing"  # Default value
-        self.language = "ko-KR"
+        self.language = "en-US"
         self.max_tokens = 4000
         self.temperature = 0.7
 
@@ -307,3 +307,47 @@ async def handle_error_response(msg: cl.Message, error_type: str, error_msg: str
     full_msg = f"❌ **{error_type}**: {error_msg}"
     await safe_stream_token(msg, full_msg)
     logger.error(f"{error_type}: {error_msg}")
+
+async def retry_async_operation(
+    operation,
+    *args,
+    max_retries: int = 3,
+    initial_delay: float = 0.2,
+    backoff_factor: float = 2.0,
+    **kwargs
+) -> Tuple[bool, Any]:
+    """
+    Retry an async operation with exponential backoff
+    
+    Args:
+        operation: Async function to retry
+        *args: Positional arguments for the operation
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay between retries in seconds
+        backoff_factor: Multiplier for delay after each retry
+        **kwargs: Keyword arguments for the operation
+    
+    Returns:
+        Tuple of (success: bool, result: Any)
+    """
+    import asyncio
+    
+    delay = initial_delay
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            result = await operation(*args, **kwargs)
+            return True, result
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"Attempt {attempt + 1}/{max_retries} failed: {type(e).__name__}: {str(e)}"
+            )
+            
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay *= backoff_factor
+    
+    logger.error(f"Operation failed after {max_retries} attempts: {last_error}")
+    return False, last_error

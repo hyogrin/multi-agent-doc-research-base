@@ -1,6 +1,9 @@
 # Multi-Agent Doc Research
 An AI-powered chatbot that leverages planning and search to provide accurate and context-aware responses to user queries. Built with FastAPI, Azure OpenAI, and Gradio, this project demonstrates advanced techniques for enhancing LLM applications with modular design, evaluation support, and flexible UI options.
 
+![multi-agent-doc-research-architecture-Page-1.jpg](/images/multi-agent-doc-research-architecture-Page-1.jpg)
+
+
 ### 🧠 Semantic Kernel Integration
 - The chatbot now incorporates [Semantic Kernel](https://github.com/microsoft/semantic-kernel), Microsoft's open-source orchestration SDK for LLM apps.
 - Enables more intelligent planning and contextual understanding, resulting in richer, more accurate responses.
@@ -28,17 +31,10 @@ An AI-powered chatbot that leverages planning and search to provide accurate and
 - Automatically decomposes **complex questions into sub-queries**, searches them, and returns synthesized context to the chatbot.  
 - Boosts performance in multi-intent or multi-hop question scenarios.
 
-### 🌐 Multiple Web Search Options
-- Supports both:  
-  - **Bing Search API**  
-  - **Grounding with Bing Search**  
-- Allows flexible configuration depending on customer preference or available environments.
-
-
-
 # Project Structure
 
 The project is organized into two main parts:
 
 - `backend`: Contains the FastAPI server and all backend functionality
 - `frontend`: Contains the frontend UI
+

@@ -28,6 +28,7 @@ from app_utils import (
     create_api_payload,
     safe_stream_token,
     safe_send_step,
+    retry_async_operation,
     safe_update_message,
     handle_error_response
 )
@@ -58,8 +59,12 @@ SEARCH_ENGINES = {
 
 # Define the multi_agent_type
 MULTI_AGENT_TYPES = {
-    "Semantic Kernel": "sk",
-    "Vanilla AOAI SDK": "vanilla"
+    "Semantic Kernel GroupChat": "sk",
+    "Vanilla AOAI SDK": "vanilla",
+    "Semantic Kernel Magentic(Deep-Research-Agents)": "magentic",
+    "MS Agent Framework(TBD)": "agent_framework",
+    "o3-deep-research(TBD)": "o3-deep-research"
+    
 }
 
 # Internationalization constants
@@ -152,6 +157,14 @@ def find_starter_category_for_prompt(language: str, prompt: str) -> Optional[str
             return category
 
     return None
+
+def create_requests_session(max_retries: int = 3) -> requests.Session:
+    """Create a requests session with retry adapter"""
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(max_retries=max_retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 # ============================================================================
 # Starter Functions - 통합 및 중앙화
@@ -361,10 +374,7 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
         allowed_extensions = {'.pdf', '.docx', '.txt'}
         
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+        session = create_requests_session()
         
         for att in files:
             # Get filename - handle Chainlit file objects properly
@@ -654,10 +664,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     
     try:
         # Set up session with retry capability
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+        session = create_requests_session()
         
         api_url = SK_API_URL
         
@@ -1123,6 +1130,75 @@ async def on_check_upload_status(action: cl.Action):
     await cl.Message(content="\n".join(lines)).send()
     return "Listed active uploads"
     
+def _create_settings_components(language: str) -> list:
+    """Create settings UI components for the given language"""
+    ui_text = UI_TEXT.get(language, UI_TEXT.get("en-US", {}))
+    
+    return [
+        cl.input_widget.Switch(
+            id="research",
+            label=ui_text.get("research_title", "Research"),
+            initial=True,
+            tooltip=ui_text.get("research_desc", "")
+        ),
+        cl.input_widget.Switch(
+            id="planning",
+            label=ui_text.get("planning_title", "Planning"),
+            initial=False,
+            tooltip=ui_text.get("planning_desc", "")
+        ),
+        cl.input_widget.Switch(
+            id="ai_search",
+            label=ui_text.get("ai_search_title", "AI Search"),
+            initial=True,
+            tooltip=ui_text.get("ai_search_desc", "")
+        ),
+        cl.input_widget.Select(
+            id="multi_agent_type",
+            label=ui_text.get("multi_agent_type_title", "Multi-Agent Type"),
+            initial_index=0,
+            values=list(MULTI_AGENT_TYPES.keys()),
+            tooltip=ui_text.get("multi_agent_type_desc", "")
+        ),
+        cl.input_widget.Switch(
+            id="verbose",
+            label=ui_text.get("verbose_title", "Verbose"),
+            initial=True,
+            tooltip=ui_text.get("verbose_desc", "")
+        ),
+        cl.input_widget.Switch(
+            id="show_starters",
+            label="📋 Show Quick Start Options",
+            initial=False,
+            tooltip="Toggle to show/hide quick start prompts"
+        ),
+        cl.input_widget.Slider(
+            id="max_tokens",
+            label="Max Tokens",
+            initial=4000,
+            min=1000,
+            max=8000,
+            step=500,
+            tooltip="Maximum number of tokens in response"
+        ),
+        cl.input_widget.Slider(
+            id="temperature",
+            label="Temperature",
+            initial=0.7,
+            min=0.0,
+            max=1.0,
+            step=0.1,
+            tooltip="Controls randomness in response generation"
+        )
+    ]
+
+async def _send_settings_once(language: str):
+    """Send settings UI once (used by retry logic)"""
+    settings_components = _create_settings_components(language)
+    await cl.ChatSettings(settings_components).send()
+    cl.user_session.set("chat_settings_sent", True)
+    await asyncio.sleep(0.15)  # Stabilization delay
+
 async def ensure_chat_settings_ui(language: str, force: bool = False):
     """Guarantee the settings panel appears even after reconnects."""
     already_sent = cl.user_session.get("chat_settings_sent", False)
@@ -1132,90 +1208,20 @@ async def ensure_chat_settings_ui(language: str, force: bool = False):
 
     logger.info(f"⚙️ Sending chat settings UI for language: {language}")
     
-    # WebSocket 연결 대기
-    max_retries = 3
-    retry_delay = 0.2
+    # Use retry utility
+    success, result = await retry_async_operation(
+        _send_settings_once,
+        language,
+        max_retries=3,
+        initial_delay=0.2,
+        backoff_factor=2.0
+    )
     
-    for attempt in range(max_retries):
-        try:
-            ui_text = UI_TEXT.get(language, UI_TEXT.get("en-US", {}))
-            
-            settings_components = [
-                cl.input_widget.Switch(
-                    id="research",
-                    label=ui_text.get("research_title", "Research"),
-                    initial=True,
-                    tooltip=ui_text.get("research_desc", "")
-                ),
-                cl.input_widget.Switch(
-                    id="planning",
-                    label=ui_text.get("planning_title", "Planning"),
-                    initial=False,
-                    tooltip=ui_text.get("planning_desc", "")
-                ),
-                cl.input_widget.Switch(
-                    id="ai_search",
-                    label=ui_text.get("ai_search_title", "AI Search"),
-                    initial=True,
-                    tooltip=ui_text.get("ai_search_desc", "")
-                ),
-                cl.input_widget.Select(
-                    id="multi_agent_type",
-                    label=ui_text.get("multi_agent_type_title", "Multi-Agent Type"),
-                    initial_index=0,
-                    values=list(MULTI_AGENT_TYPES.keys()),
-                    tooltip=ui_text.get("multi_agent_type_desc", "")
-                ),
-                cl.input_widget.Switch(
-                    id="verbose",
-                    label=ui_text.get("verbose_title", "Verbose"),
-                    initial=True,
-                    tooltip=ui_text.get("verbose_desc", "")
-                ),
-                cl.input_widget.Switch(
-                    id="show_starters",
-                    label="📋 Show Quick Start Options",
-                    initial=False,
-                    tooltip="Toggle to show/hide quick start prompts"
-                ),
-                cl.input_widget.Slider(
-                    id="max_tokens",
-                    label="Max Tokens",
-                    initial=4000,
-                    min=1000,
-                    max=8000,
-                    step=500,
-                    tooltip="Maximum number of tokens in response"
-                ),
-                cl.input_widget.Slider(
-                    id="temperature",
-                    label="Temperature",
-                    initial=0.7,
-                    min=0.0,
-                    max=1.0,
-                    step=0.1,
-                    tooltip="Controls randomness in response generation"
-                )
-            ]
-
-            await cl.ChatSettings(settings_components).send()
-            cl.user_session.set("chat_settings_sent", True)
-            logger.info(f"✅ Chat settings UI sent successfully (attempt {attempt + 1}/{max_retries})")
-            
-            # 안정화 지연
-            await asyncio.sleep(0.15)
-            return
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Attempt {attempt + 1}/{max_retries} failed to send chat settings: {e}")
-            
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-            else:
-                logger.error(f"❌ Failed to send chat settings after {max_retries} attempts: {e}")
-                # 실패 시 플래그 리셋
-                cl.user_session.set("chat_settings_sent", False)
+    if success:
+        logger.info("✅ Chat settings UI sent successfully")
+    else:
+        logger.error(f"❌ Failed to send chat settings: {result}")
+        cl.user_session.set("chat_settings_sent", False)
 
 async def _delayed_settings_retry(language: str, delay: float = 1.0, max_attempts: int = 2):
     """Background retry to ensure the settings panel eventually appears."""
