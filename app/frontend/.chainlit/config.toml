@@ -1,6 +1,6 @@
 [project]
 # Whether to enable telemetry (default: true). No personal data is collected.
-enable_telemetry = true
+enable_telemetry = false
 
 # List of environment variables to be provided by each user to use the app.
 user_env = []
@@ -30,6 +30,11 @@ websocket_timeout = 60
 socket_io_timeout = 60
 socket_io_ping_timeout = 30
 socket_io_ping_interval = 15
+require_authentication = false
+max_http_buffer_size = 100000000
+max_message_size = 100000000
+ping_timeout = 60000
+ping_interval = 25000
 
 # 새로운 설정 추가
 session_cookie_httponly = true

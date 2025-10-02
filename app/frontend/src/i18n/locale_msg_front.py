@@ -46,7 +46,24 @@ UI_TEXT = {
         "start_research": "Starting research...",
         "organize_research": "Organizing research...",
         "write_research": "Writing research result...",
-        "review_research": "Reviewing research ..."
+        "review_research": "Reviewing research ...",
+        "help_message": """
+            🎉 **Welcome to Multi-Agent Doc Research!! **
+
+            📖 **You can upload your files**
+
+             **File Upload Instructions:**
+            1️⃣ Click the 📎 button in the chat input box
+            2️⃣ Select the file you want to upload (drag & drop is also supported)
+            3️⃣ The file will be automatically added to the Knowledge Base
+
+
+            ✅ **Supported file formats:** PDF, DOCX, TXT
+            📊 **Upload limits:** Up to 10 files, each under 50MB
+            🔍 **Processing:** Uploaded files will be vectorized for AI search
+
+            💬 **Questions:** Feel free to ask related questions after uploading files!
+        """
     },
     "ko-KR": {
         "title": "# Microsoft Plan and Search Chat",
@@ -94,6 +111,22 @@ UI_TEXT = {
         "organize_research": "리서치 정리 중...",
         "write_research": "리서치 결과 작성중...",
         "review_research": "리서치 결과 검토중...",
+        "help_message": """
+            🎉 **Doc Research Chat에 오신 것을 환영합니다!**
+
+            📖 **파일 업로드 기능이 활성화되었습니다**
+
+             **파일 업로드 방법:**
+            1️⃣ 채팅 입력창의 📎 버튼을 클릭하세요
+            2️⃣ 업로드할 파일을 선택하세요 (드래그&드롭도 가능)
+            3️⃣ 채팅 버튼을 클릭하면 파일이 자동으로 Knowledge Base에 추가됩니다
+
+            ✅ **지원 파일 형식:** PDF, DOCX, TXT  
+            📊 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하  
+            🔍 **처리 과정:** 업로드된 파일은 AI 검색을 위해 벡터화됩니다
+
+            💬 **질문하기:** 파일 업로드 후 관련 질문을 해보세요!
+        """
     }
 }
 
@@ -102,7 +135,18 @@ EXAMPLE_PROMPTS = {
         "upload": {
             "title": "Upload Document",
             "description": "Upload your own document to report and ask questions",
-            "prompt": "upload documents"
+            "prompt": """
+            🎉 **Welcome to Multi-Agent Doc Research!! **
+            📖 **You can upload your files**
+             **File Upload Instructions:**
+            1️⃣ Click the 📎 button in the chat input box
+            2️⃣ Select the file you want to upload (drag & drop is also supported)
+            3️⃣ The file will be automatically added to the Knowledge Base
+            ✅ **Supported file formats:** PDF, DOCX, TXT
+            📊 **Upload limits:** Up to 10 files, each under 50MB
+            🔍 **Processing:** Uploaded files will be vectorized for AI search
+            💬 **Questions:** Feel free to ask related questions after uploading files!
+        """
         },
         "report": {
             "title": "Generate Report", 
@@ -111,10 +155,9 @@ EXAMPLE_PROMPTS = {
             You are an AI research analyst. Based on the following outline, generate a high-quality analysis of recent AI industry trends across Policy & Regulation, Business & Industry, 
             and Technology & Research. The response will be used as a document for investors and executives, 
             and must adhere to these guidelines:
-
             [Writing Guidelines]
             Use only the information provided in the given Context. Do not include any external knowledge or prior assumptions.
-            The total length should be at least 3,000 characters, with content that is dense, refined, and free of redundancy or unnecessary elaboration.
+            The total length should be at least 5,000 characters, with content that is dense, refined, and free of redundancy or unnecessary elaboration.
             Ensure the writing is well-structured, analytical, and professional in tone.
             """
         },
@@ -128,7 +171,18 @@ EXAMPLE_PROMPTS = {
         "upload": {
             "title": "문서 업로드",
             "description": "보고 및 질문을 위해 자신의 문서를 업로드합니다.",
-            "prompt": "문서 업로드"
+            "prompt": """
+            🎉 **Doc Research Chat에 오신 것을 환영합니다!**
+            📖 **파일 업로드 기능이 활성화되었습니다**
+             **파일 업로드 방법:**
+            1️⃣ 채팅 입력창의 📎 버튼을 클릭하세요
+            2️⃣ 업로드할 파일을 선택하세요 (드래그&드롭도 가능)
+            3️⃣ 채팅 버튼을 클릭하면 파일이 자동으로 Knowledge Base에 추가됩니다
+            ✅ **지원 파일 형식:** PDF, DOCX, TXT  
+            📊 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하  
+            🔍 **처리 과정:** 업로드된 파일은 AI 검색을 위해 벡터화됩니다
+            💬 **질문하기:** 파일 업로드 후 관련 질문을 해보세요!
+        """
         },
         "report": {
             "title": "보고서 생성",
@@ -138,7 +192,7 @@ EXAMPLE_PROMPTS = {
             이 분석은 투자자와 경영진을 위한 문서로 활용되며, 다음 작성 지침을 반드시 준수해야 합니다.
             [작성 지침]
             제공된 Context 정보만 활용하며, 외부 지식이나 사전 정보는 절대 포함하지 마십시오.
-            전체 분량은 3,000자 이상을 기준으로 하며, 반복적이거나 불필요하게 장황한 표현은 배제하고 정제된 밀도 높은 문장으로 구성하십시오.
+            전체 분량은 5,000자 이상을 기준으로 하며, 반복적이거나 불필요하게 장황한 표현은 배제하고 정제된 밀도 높은 문장으로 구성하십시오.
             글은 체계적이고 분석적이며, 전문적인 톤으로 작성하십시오.
             """
         },

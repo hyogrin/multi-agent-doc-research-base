@@ -64,4 +64,4 @@ export API_URL=${API_URL:-"http://localhost:8000/plan_search"}
 echo "API_URL: $API_URL"
 
 # Run the Chainlit application
-chainlit run src/app.py --host 127.0.0.1 --port 7860
+chainlit run src/app.py --host 127.0.0.1 --port 7860 -w

@@ -66,7 +66,7 @@ class IntentPlanPlugin:
         name="analyze_intent",
     )
     async def analyze_intent(
-        self, original_query: str, locale: str = "ko-KR", temperature: float = 0.3
+        self, original_query: str, locale: str = "en-US", temperature: float = 0.3
     ) -> str:
         """
         Analyze user intent and rewrite query accordingly.
@@ -148,7 +148,7 @@ class IntentPlanPlugin:
         self,
         user_intent: str,
         enriched_query: str,
-        locale: str = "ko-KR",
+        locale: str = "en-US",
         temperature: float = 0.7,
     ) -> str:
         """
@@ -213,7 +213,7 @@ class IntentPlanPlugin:
 
             return json.dumps(fallback_result)
 
-    def _fallback_intent_analysis(self, query: str, locale: str = "ko-KR") -> str:
+    def _fallback_intent_analysis(self, query: str, locale: str = "en-US") -> str:
         """
         Fallback intent analysis using keyword matching.
 

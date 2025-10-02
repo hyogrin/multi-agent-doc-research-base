@@ -107,12 +107,12 @@ async def process_uploaded_files_background(
         import json
         
         # Update status to processing
-        await update_upload_status(upload_id, "processing", "파일 처리 중...", 10)
+        await update_upload_status(upload_id, "processing", "Processing files...", 10)
         
         upload_plugin = UnifiedFileUploadPlugin()
         
         # Update status before upload
-        await update_upload_status(upload_id, "processing", "벡터 데이터베이스에 업로드 중...", 50)
+        await update_upload_status(upload_id, "processing", "Uploading to vector database...", 50)
         
         # Create file mapping for actual filenames
         file_mapping = {}
@@ -142,7 +142,7 @@ async def process_uploaded_files_background(
             await update_upload_status(
                 upload_id, 
                 "completed", 
-                f"업로드 완료! {result_data.get('successful_uploads', 0)}개 파일 성공", 
+                f"upload complete! {result_data.get('successful_uploads', 0)} files successfully uploaded", 
                 100,
                 result_data.get("results", [])
             )
@@ -150,7 +150,7 @@ async def process_uploaded_files_background(
             await update_upload_status(
                 upload_id, 
                 "error", 
-                f"업로드 실패: {result_data.get('message', 'Unknown error')}", 
+                f"upload failed: {result_data.get('message', 'Unknown error')}", 
                 100,
                 result_data.get("results", [])
             )

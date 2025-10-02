@@ -10,17 +10,20 @@ import threading
 import time
 from datetime import datetime
 from collections import defaultdict
-from typing import Dict, Tuple, Any, List
+from typing import Dict, Tuple, Any, List, Optional
 from i18n.locale_msg_front import UI_TEXT, EXAMPLE_PROMPTS
 from pathlib import Path
 from io import BytesIO
 from enum import Enum
+import os
+os.environ["CHAINLIT_CORS_ALLOW_ORIGIN"] = "*"  # 개발 환경용, 프로덕션에서는 특정 도메인 지정
 
 # Import classes and utilities from app_utils
 from app_utils import (
     ChatSettings, 
     StepNameManager, 
     UploadManager,
+    StarterConfig,
     decode_step_content,
     create_api_payload,
     safe_stream_token,
@@ -55,8 +58,8 @@ SEARCH_ENGINES = {
 
 # Define the multi_agent_type
 MULTI_AGENT_TYPES = {
-    "SK": "sk",
-    "Vanilla": "vanilla"
+    "Semantic Kernel": "sk",
+    "Vanilla AOAI SDK": "vanilla"
 }
 
 # Internationalization constants
@@ -106,44 +109,153 @@ def auth_callback(username: str, password: str):
         logger.error(f"❌ Authentication error: {e}")
         return None
 
-def get_current_prompt(lang: str, category: str) -> str:
-    """Get current prompt text for a category in the specified language"""
-    return EXAMPLE_PROMPTS[lang][category]["prompt"]
+# ============================================================================
+# Helper Functions - 통합 및 간소화
+# ============================================================================
 
-def get_starter_label(lang: str, category: str) -> str:
+def get_user_language(settings=None) -> str:
+    """Get current user language from settings with fallback"""
+    if settings is None:
+        settings = cl.user_session.get("settings")
+    return getattr(settings, "language", "en-US")
+
+def get_chat_profile_language() -> str:
+    """Get language from current chat profile"""
+    current_profile = cl.user_session.get("chat_profile", "English")
+    return "en-US" if current_profile == "English" else "ko-KR"
+
+def get_starter_prompt(language: str, category: str) -> str:
+    """Get prompt text for a category in the specified language"""
+    return EXAMPLE_PROMPTS.get(language, {}).get(category, {}).get("prompt", "")
+
+def get_starter_label(language: str, category: str) -> str:
     """Get starter label for a category in the specified language"""
-    return EXAMPLE_PROMPTS[lang][category]["title"]
+    return EXAMPLE_PROMPTS.get(language, {}).get(category, {}).get("title", "")
 
-def get_starters_for_language(language: str):
-    """Get starters for a specific language"""
+def find_starter_category_for_prompt(language: str, prompt: str) -> Optional[str]:
+    """Identify guide-only starter category when its prompt is sent verbatim."""
+    if not prompt:
+        return None
+
+    normalized_prompt = prompt.strip()
+    if not normalized_prompt:
+        return None
+
+    for category in StarterConfig.CATEGORIES:
+        config = StarterConfig.get_category_config(category)
+        # guide-only 스타터만 검사 (send_to_backend=False)
+        if config.get("send_to_backend", True):
+            continue
+
+        starter_prompt = get_starter_prompt(language, category)
+        if starter_prompt and starter_prompt.strip() == normalized_prompt:
+            return category
+
+    return None
+
+# ============================================================================
+# Starter Functions - 통합 및 중앙화
+# ============================================================================
+
+def get_starters_for_language(language: str) -> List[cl.Starter]:
+    """Get starters for a specific language - 통합 버전
+    
+    Args:
+        language: Language code (e.g., 'ko-KR', 'en-US')
+    
+    Returns:
+        List of Starter objects configured for the language
+    """
     starters = []
     
-    categories = ["upload", "report", "ask_questions"]
     logger.info(f"Getting starters for language: {language}")
-    logger.info(f"Available categories in EXAMPLE_PROMPTS: {list(EXAMPLE_PROMPTS.get(language, {}).keys())}")
+    logger.info(f"Available categories: {StarterConfig.CATEGORIES}")
     
-    for category in categories:
-        if category in EXAMPLE_PROMPTS[language]:
-            if category == "upload":
-                emoji="⤴️"
-                image="/public/images/2934_color.png"
-            elif category == "report":
-                emoji="💡"
-                image="/public/images/1f4a1_color.png"
-            elif category == "ask_questions":
-                emoji="❓"
-                image="/public/images/2753_color.png"
-                        
-            starter = cl.Starter(
-                label=get_starter_label(language, category),
-                message=get_current_prompt(language, category),
-                icon=image
-            )
-            starters.append(starter)
-            logger.info(f"Added starter: {category} - {starter.label}")
-    return starters  # ensure starters list is returned
+    for i, category in enumerate(StarterConfig.CATEGORIES):
+        if category not in EXAMPLE_PROMPTS.get(language, {}):
+            logger.warning(f"Category '{category}' not found in EXAMPLE_PROMPTS for language '{language}'")
+            continue
+        
+        config = StarterConfig.get_category_config(category)
+        
+        starter = cl.Starter(
+            label=get_starter_label(language, category),
+            message=get_starter_prompt(language, category),
+            icon=config.get("image")
+        )
+        starters.append(starter)
+        
+        logger.info(f"Added starter: {category} - {starter.label} (send_to_backend: {config.get('send_to_backend', True)})")
+    
+    return starters
 
-# Upload-related functions (using upload_manager)
+async def create_starter_actions(starters: List[cl.Starter], language: str) -> List[cl.Action]:
+    """Create action buttons from starters - 통합 버전
+    
+    Args:
+        starters: List of Starter objects
+        language: Current language code (e.g., 'ko-KR', 'en-US')
+    
+    Returns:
+        List of Action objects with proper configuration
+    """
+    actions = []
+    
+    for i, starter in enumerate(starters):
+        if i >= len(StarterConfig.CATEGORIES):
+            logger.warning(f"Starter index {i} exceeds available categories")
+            continue
+            
+        category = StarterConfig.CATEGORIES[i]
+        config = StarterConfig.get_category_config(category)
+        emoji = config.get("emoji", "🤖")
+        
+        actual_message = get_starter_prompt(language, category)
+        
+        actions.append(
+            cl.Action(
+                name=f"starter_{i}",
+                payload={
+                    "message": actual_message,  # 실제 프롬프트 내용
+                    "label": starter.label, 
+                    "index": i,
+                    "category": category,
+                    "send_to_backend": config.get("send_to_backend", True)
+                },
+                label=f"{emoji} {starter.label}",
+                description=f"Use starter: {starter.label}"
+            )
+        )
+    
+    logger.info(f"Created {len(actions)} action buttons for language: {language}")
+    return actions
+
+async def send_starters_as_actions(language: str):
+    """Send starters as action buttons in a message - 통합 버전
+    
+    Args:
+        language: Current language code (e.g., 'ko-KR', 'en-US')
+    """
+    starters = get_starters_for_language(language)
+    actions = await create_starter_actions(starters, language)
+    
+    # Create message with starter list
+    starters_message = "📋 **Quick Start Options:**\n\n"
+    
+    for i, starter in enumerate(starters):
+        if i >= len(StarterConfig.CATEGORIES):
+            continue
+        config = StarterConfig.get_category_config(StarterConfig.CATEGORIES[i])
+        emoji = config.get("emoji", "🤖")
+        starters_message += f"{emoji} **{starter.label}**\n"
+    
+    await cl.Message(content=starters_message, actions=actions).send()
+
+
+# ============================================================================
+# Upload-related functions
+# ============================================================================
+
 async def check_upload_status_once(upload_id: str) -> dict | None:
     """단발성 업로드 상태 조회 (폴링 루프 내부/액션 버튼에서 호출)"""
     try:
@@ -176,9 +288,9 @@ async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: flo
                 green_blocks = progress // 10
                 progress_bar = "🟩" * green_blocks + "⬜" * (10 - green_blocks)
                 msg.content = (
-                    f"📤 **업로드 진행 중** (ID: {upload_id[:8]})\n"
+                    f"📤 **Uploading files...** (ID: {upload_id[:8]})\n"
                     f"{message}\n\n"
-                    f"진행률: {progress}%\n{progress_bar}"
+                    f"Progress: {progress}%\n{progress_bar}"
                 )
                 await msg.update()
             elif status == "completed":
@@ -186,20 +298,20 @@ async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: flo
                 fail_cnt = len([r for r in file_results if r.get("status") == "error"])
                 skip_cnt = len([r for r in file_results if r.get("status") == "skipped"])
                 msg.content = (
-                    f"✅ **업로드 완료** (ID: {upload_id[:8]})\n"
+                    f"✅ **Upload complete** (ID: {upload_id[:8]})\n"
                     f"{message}\n\n"
-                    f"📄 성공: {success_cnt} / 실패: {fail_cnt} / 기등록: {skip_cnt}\n"
-                    f"💡 이제 문서에 대해 질문해보세요!"
+                    f"📄 Success: {success_cnt} / Failure: {fail_cnt} / Skipped: {skip_cnt}\n"
+                    f"💡 You can now ask questions about the document!"
                 )
                 await msg.update()
                 # 예시 질문 자동 전송 (1회)
                 entry = upload_manager.get_upload(upload_id)
-                if not entry.get("examples_sent"):
+                if entry and not entry.get("examples_sent"):
                     await send_example_questions(upload_id)
                     upload_manager.set_examples_sent(upload_id)
                 break
             elif status == "error":
-                msg.content = f"❌ **업로드 실패** (ID: {upload_id[:8]})\n{message}"
+                msg.content = f"❌ **Upload failed** (ID: {upload_id[:8]})\n{message}"
                 await msg.update()
                 break
             else:
@@ -241,7 +353,7 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
     """Unified file upload handler for all file types"""
     try:
         # Initial upload message
-        status_message = cl.Message(content="📤 **파일 업로드 중...**\n\n파일을 서버에 업로드하고 있습니다...")
+        status_message = cl.Message(content="📤 ** uploading documents...**\n\n uploading your files to AI Search...")
         await status_message.send()
         
         # Process and validate files
@@ -271,7 +383,7 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
             # Check file extension
             file_ext = os.path.splitext(filename)[1].lower()
             if file_ext not in allowed_extensions:
-                await cl.Message(content=f"❌ **지원하지 않는 파일 형식**: {filename}\n\n지원 형식: PDF, DOCX, TXT").send()
+                await cl.Message(content=f"❌ **Unsupported file format**: {filename}\n\nSupported formats: PDF, DOCX, TXT").send()
                 continue
             
             file_bytes = None
@@ -287,7 +399,7 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
                     with open(att.path, "rb") as f:
                         file_bytes = f.read()
                 except Exception as e:
-                    await cl.Message(content=f"❌ **파일 읽기 실패**: {filename} - {e}").send()
+                    await cl.Message(content=f"❌ **File read failed**: {filename} - {e}").send()
                     continue
             elif isinstance(att, dict) and ("content" in att or "data" in att):
                 b64 = att.get("content") or att.get("data")
@@ -304,21 +416,21 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
                     file_bytes = r.content
                     content_type = r.headers.get("Content-Type", content_type)
                 except Exception as e:
-                    await cl.Message(content=f"❌ **파일 다운로드 실패**: {filename} - {e}").send()
+                    await cl.Message(content=f"❌ **File download failed**: {filename} - {e}").send()
                     continue
             else:
                 logger.warning(f"Cannot process file: {filename} - unsupported format")
-                await cl.Message(content=f"❌ **파일 처리 불가**: {filename} - 지원하지 않는 형식").send()
+                await cl.Message(content=f"❌ **Unsupported file format**: {filename}").send()
                 continue
 
             # Check if we got file content
             if not file_bytes:
-                await cl.Message(content=f"❌ **파일 내용 없음**: {filename}").send()
+                await cl.Message(content=f"❌ **Empty file**: {filename}").send()
                 continue
 
             # Check file size
             if len(file_bytes) > MAX_FILE_SIZE:
-                await cl.Message(content=f"❌ **파일 크기 초과**: {filename}\n\n최대 크기: 50MB").send()
+                await cl.Message(content=f"❌ **File size exceeded**: {filename}\n\nMaximum size: 50MB").send()
                 continue
 
             # Add to upload payload
@@ -327,18 +439,18 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
             logger.info(f"Added file to upload: {filename} ({len(file_bytes)} bytes)")
 
         if not files_payload:
-            status_message.content = "❌ **업로드할 유효한 파일이 없습니다.**"
+            status_message.content = "❌ **No valid files to upload.**"
             await status_message.update()
             return False
 
         # Check file count limit
         if len(files_payload) > 10:
-            status_message.content = "❌ **파일 개수 초과**: 최대 10개 파일만 업로드 가능합니다."
+            status_message.content = "❌ **File count exceeded**: You can only upload up to 10 files."
             await status_message.update()
             return False
 
         # Update message with file list
-        status_message.content = f"📤 **파일 업로드 중...**\n\n업로드할 파일 ({len(valid_files)}개):\n" + "\n".join([f"• {f}" for f in valid_files])
+        status_message.content = f"📤 **Uploading files...**\n\nFiles to upload ({len(valid_files)}):\n" + "\n".join([f"• {f}" for f in valid_files])
         await status_message.update()
 
         # Prepare form data
@@ -363,43 +475,40 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
                     start_progress_tracker(upload_id, valid_files, status_message)
                     return True
                 else:
-                    message = resp_json.get("message", "업로드 완료")
-                    status_message.content = f"✅ **업로드 응답**: {message}"
+                    message = resp_json.get("message", "upload complete")
+                    status_message.content = f"✅ **upload response**: {message}"
                     await status_message.update()
                     return True
                     
             except Exception as e:
-                status_message.content = f"✅ **업로드 완료**: {resp.text}"
+                status_message.content = f"✅ **upload complete**: {resp.text}"
                 await status_message.update()
                 return True
         else:
-            status_message.content = f"❌ **업로드 실패**: {resp.status_code} - {resp.text}"
+            status_message.content = f"❌ **upload failed**: {resp.status_code} - {resp.text}"
             await status_message.update()
             return False
 
     except Exception as e:
-        await cl.Message(content=f"❌ **업로드 오류**: {str(e)}").send()
+        await cl.Message(content=f"❌ **upload error**: {str(e)}").send()
         logger.error(f"Upload error: {e}")
         return False
-        error_msg = f"Upload error: {str(e)}"
-        await cl.Message(content=error_msg).send()
-        logger.error(f"Upload error: {e}")
 
 @cl.set_chat_profiles
 async def chat_profile():
     """Set up chat profiles for different languages"""
     return [
         cl.ChatProfile(
-            name="Korean",
-            markdown_description="## Multi-Agent Doc Research",
-            icon="/public/images/azure-ai-search.png",
-            starters=get_starters_for_language("ko-KR")
-        ),
-        cl.ChatProfile(
             name="English", 
             markdown_description="## Multi-Agent Doc Research",
             icon="/public/images/azure-ai-search.png",
-            starters=get_starters_for_language("en-US")
+            starters=get_starters_for_language("en-US") 
+        ),
+        cl.ChatProfile(
+            name="Korean",
+            markdown_description="## Multi-Agent Doc Research",
+            icon="/public/images/azure-ai-search.png",
+            starters=get_starters_for_language("ko-KR")  
         ),
         
     ]
@@ -407,118 +516,12 @@ async def chat_profile():
 @cl.on_chat_start
 async def start():
     """Initialize chat session with user welcome"""
-    # Simplified start: rely on global config for file upload (no modal AskFileMessage)
-    
-    # 사용자 정보 가져오기
-    user = cl.user_session.get("user")
-    
-    # 사용자 환영 메시지
-    if user:
-        user_role = user.metadata.get("role", "user")
-        
-        # 관리자 권한이 있는 경우 추가 메시지
-        if user_role == "admin":
-            await cl.Message(content="🔧 **Admin Access Granted**\nYou have administrator privileges.").send()
-    
-    # Get current chat profile
-    profile = cl.user_session.get("chat_profile", "Korean")
-    language = "ko-KR" if profile == "Korean" else "en-US"
-    
-    # Initialize chat settings
+    logger.info("🚀 Chat session starting...")
     settings = ChatSettings()
-    settings.language = language
-    cl.user_session.set("settings", settings)
     
-    # Set up chat settings UI
-    ui_text = UI_TEXT[language]
+    # Ensure the settings panel is re-sent for every new session
+    cl.user_session.set("chat_settings_sent", False)
     
-    # Create settings components
-    settings_components = [
-        cl.input_widget.Switch(
-            id="research",
-            label=ui_text["research_title"],
-            initial=True,
-            tooltip=ui_text["research_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="web_search",
-            label=ui_text["web_search_title"],
-            initial=False,
-            tooltip=ui_text["web_search_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="planning",
-            label=ui_text["planning_title"],
-            initial=False,
-            tooltip=ui_text["planning_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="ytb_search",
-            label=ui_text["ytb_search_title"],
-            initial=False,
-            tooltip=ui_text["ytb_search_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="mcp",
-            label=ui_text["mcp_title"],
-            initial=False,
-            tooltip=ui_text["mcp_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="ai_search",
-            label=ui_text["ai_search_title"],
-            initial=True,
-            tooltip=ui_text["ai_search_desc"]
-        ),
-        cl.input_widget.Select(
-            id="multi_agent_type",
-            label=ui_text["multi_agent_type_title"],
-            initial_index=0,
-            values=list(MULTI_AGENT_TYPES.keys()),
-            tooltip=ui_text["multi_agent_type_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="verbose",
-            label=ui_text["verbose_title"],
-            initial=True,
-            tooltip=ui_text["verbose_desc"]
-        ),
-        cl.input_widget.Select(
-            id="search_engine",
-            label=ui_text["search_engine_title"],
-            values=list(SEARCH_ENGINES.keys()),
-            initial_index=0,
-            tooltip=ui_text["search_engine_desc"]
-        ),
-        cl.input_widget.Switch(
-            id="show_starters",
-            label="📋 Show Quick Start Options",
-            initial=False,
-            tooltip="Toggle to show/hide quick start prompts"
-        ),
-        cl.input_widget.Slider(
-            id="max_tokens",
-            label="Max Tokens",
-            initial=4000,
-            min=1000,
-            max=8000,
-            step=500,
-            tooltip="Maximum number of tokens in response"
-        ),
-        cl.input_widget.Slider(
-            id="temperature",
-            label="Temperature",
-            initial=0.7,
-            min=0.0,
-            max=1.0,
-            step=0.1,
-            tooltip="Controls randomness in response generation"
-        )
-    ]
-    
-    # Send settings to user
-    await cl.ChatSettings(settings_components).send()
-
     # Enable file upload UI - this is CRITICAL for settings icon to appear
     cl.user_session.set("files", {
         "accept": {
@@ -530,29 +533,71 @@ async def start():
         "max_files": 10
     })
 
-    # Set is_first flag to use in on_message main
-    cl.user_session.set("is_first", True)
-
-    # Display file upload information with clear instructions
-    welcome_msg = f"""
-🎉 **Doc Research Chat에 오신 것을 환영합니다!**
-
-📁 **파일 업로드 기능이 활성화되었습니다**
-
-� **파일 업로드 방법:**
-1. 채팅 입력창 위의 **파일 첨부** 버튼을 클릭하세요
-2. 업로드할 파일을 선택하세요 (드래그&드롭도 가능)
-3. 파일이 자동으로 Knowledge Base에 추가됩니다
-
-✅ **지원 파일 형식:** PDF, DOCX, TXT  
-📊 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하  
-🔍 **처리 과정:** 업로드된 파일은 AI 검색을 위해 벡터화됩니다
-
-💬 **질문하기:** 파일 업로드 후 관련 질문을 해보세요!
-"""
+    # Get current chat profile with robust fallback
+    profile = cl.user_session.get("chat_profile")
+    logger.info(f"📋 Chat profile detected: {profile}")
     
-    await cl.Message(content=welcome_msg).send()
+    # Determine language based on profile (English is first/default)
+    if profile == "Korean":
+        language = "ko-KR"
+    else:
+        language = "en-US"  # Default to English
     
+    logger.info(f"🌍 Language set to: {language}")
+    
+
+    # Initialize chat settings
+    settings.language = language
+    cl.user_session.set("settings", settings)
+
+    # Allow the WebSocket to settle before sending UI components
+    await asyncio.sleep(0.35)
+    
+    # ✨ 설정 UI 먼저 전송 (가장 우선순위)
+    await ensure_chat_settings_ui(language, force=True)
+
+    # Schedule a background retry if the panel is still missing
+    if not cl.user_session.get("chat_settings_sent"):
+        asyncio.create_task(_delayed_settings_retry(language))
+
+    # 사용자 정보 가져오기
+    user = cl.user_session.get("user")
+    
+    # 사용자 환영 메시지
+    if user:
+        user_role = user.metadata.get("role", "user")
+        
+        # 관리자 권한이 있는 경우 추가 메시지
+        if user_role == "admin":
+            await cl.Message(content="🔧 **Admin Access Granted**\nYou have administrator privileges.").send()
+    
+    
+    # ✨ 그 다음 starter actions 표시
+    await send_starters_as_actions(language)
+
+@cl.on_chat_resume
+async def on_resume():
+    """Resend settings when the client reconnects after a dropped socket."""
+    logger.info("🔄 Chat session resuming...")
+    
+    settings = cl.user_session.get("settings")
+    if not settings:
+        settings = ChatSettings()
+        cl.user_session.set("settings", settings)
+    
+    language = get_user_language(settings)
+    logger.info(f"🌍 Resuming with language: {language}")
+    
+    # Reset and re-send the settings panel on every resume
+    cl.user_session.set("chat_settings_sent", False)
+
+    await asyncio.sleep(0.5)
+    
+    # 재연결 시 설정 UI 다시 전송
+    await ensure_chat_settings_ui(language, force=True)
+
+    if not cl.user_session.get("chat_settings_sent"):
+        asyncio.create_task(_delayed_settings_retry(language))
 
 @cl.on_settings_update
 async def setup_agent(settings_dict: Dict[str, Any]):
@@ -569,209 +614,14 @@ async def setup_agent(settings_dict: Dict[str, Any]):
         search_engine_name = settings_dict["search_engine"]
         settings.search_engine = SEARCH_ENGINES.get(search_engine_name, list(SEARCH_ENGINES.values())[0])
 
-    # TODO : Check if user wants to show starters
+    # Check if user wants to show starters
     show_starters = settings_dict.get("show_starters", False)
     if show_starters:
-        # Re-send starters
-        current_profile = cl.user_session.get("chat_profile", "English")
-        language = "ko-KR" if current_profile == "Korean" else "en-US"
-        starters = get_starters_for_language(language)
-        
-        # Send starters as a message with action buttons
-        starters_message = "📋 **Quick Start Options:**\n\n"
-        actions = []
-        
-        for i, starter in enumerate(starters):
-            actions.append(
-                cl.Action(
-                    name=f"starter_{i}",
-                    payload={"message": starter.message, "label": starter.label},
-                    label=starter.label,
-                    description=f"Use starter: {starter.label}"
-                )
-            )
-        
-        await cl.Message(content=starters_message, actions=actions).send()
+        language = get_chat_profile_language()
+        await send_starters_as_actions(language)
+    
     cl.user_session.set("settings", settings)
     await cl.Message(content="⚙️ Settings updated successfully!").send()
-
-async def safe_stream_token(msg: cl.Message, content: str) -> bool:
-    """Safely stream token with connection check"""
-    try:
-        await msg.stream_token(content)
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to stream token: {str(e)}")
-        return False
-
-async def safe_send_step(step: cl.Step) -> bool:
-    """Safely send step with connection check"""
-    try:
-        await step.send()
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to send step: {str(e)}")
-        return False
-
-async def safe_update_message(msg: cl.Message) -> bool:
-    """Safely update message with connection check"""
-    try:
-        await msg.update()
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to update message: {str(e)}")
-        return False
-
-# Thread-safe step name counter with cleanup
-class StepNameManager:
-    def __init__(self, cleanup_interval: int = 3600):  # 1 hour cleanup interval
-        self._counter = defaultdict(int)
-        self._timestamps = {}
-        self._lock = threading.Lock()
-        self._cleanup_interval = cleanup_interval
-        self._last_cleanup = time.time()
-    
-    def get_unique_name(self, base_name: str) -> str:
-        """Generate a unique step name with intelligent deduplication."""
-        with self._lock:
-            # Cleanup old entries periodically
-            current_time = time.time()
-            if current_time - self._last_cleanup > self._cleanup_interval:
-                self._cleanup_old_entries(current_time)
-                self._last_cleanup = current_time
-            
-            # Clean the base name for better readability
-            clean_name = self._clean_step_name(base_name)
-            
-            # Check if name already exists
-            if clean_name not in self._counter:
-                self._counter[clean_name] = 1
-                self._timestamps[clean_name] = current_time
-                return clean_name
-            else:
-                # Generate numbered variant
-                self._counter[clean_name] += 1
-                count = self._counter[clean_name]
-                unique_name = f"{clean_name} ({count})"
-                self._timestamps[unique_name] = current_time
-                return unique_name
-    
-    def _clean_step_name(self, name: str) -> str:
-        """Clean and normalize step name for better display."""
-        return name.strip()
-    
-    def _cleanup_old_entries(self, current_time: float):
-        """Remove old entries to prevent memory leaks."""
-        cutoff_time = current_time - (self._cleanup_interval * 2)
-        
-        # Find entries to remove
-        to_remove = []
-        for name, timestamp in self._timestamps.items():
-            if timestamp < cutoff_time:
-                to_remove.append(name)
-        
-        # Remove old entries
-        for name in to_remove:
-            if name in self._counter:
-                del self._counter[name]
-            if name in self._timestamps:
-                del self._timestamps[name]
-
-    # Additional methods for the StepNameManager class
-    def reset_counter(self, name_pattern: str = None):
-        """Reset counters for specific patterns or all if no pattern given."""
-        with self._lock:
-            if name_pattern:
-                to_remove = [name for name in self._counter if name_pattern in name]
-                for name in to_remove:
-                    del self._counter[name]
-                    if name in self._timestamps:
-                        del self._timestamps[name]
-            else:
-                self._counter.clear()
-                self._timestamps.clear()
-    
-    def get_stats(self) -> Dict:
-        """Get statistics about current step names."""
-        with self._lock:
-            return {
-                'total_names': len(self._counter),
-                'most_common': max(self._counter.items(), key=lambda x: x[1]) if self._counter else None,
-                'memory_usage_bytes': sum(len(k.encode()) + len(str(v).encode()) for k, v in self._counter.items())
-            }
-
-def decode_step_content(content: str) -> Tuple[str, str, str]:
-    """
-    Decode step content and generate unique step name.
-    
-    Returns:
-        tuple: (step_name, code_content, description)
-    """
-    try:
-        # Parse the content for different components
-        step_name = content.strip()
-        code_content = ""
-        description = ""
-        
-        # Check for #input# tags for descriptions
-        if '#input#' in content:
-            parts = content.split('#input#')
-            if len(parts) >= 2:
-                step_name = parts[0].strip()
-                description = parts[1].strip()
-        
-        # Check for #code# tags for code content
-        if '#code#' in content:
-            parts = content.split('#code#')
-            if len(parts) >= 2:
-                if not step_name or step_name == content.strip():
-                    step_name = parts[0].strip()
-                
-                try:
-                    # Decode base64 encoded code
-                    encoded_code = parts[1].strip()
-                    decoded_bytes = base64.b64decode(encoded_code)
-                    code_content = decoded_bytes.decode('utf-8')
-                except Exception as e:
-                    logger.warning(f"Failed to decode code content: {e}")
-                    code_content = parts[1].strip()  # Use raw content as fallback
-        
-        # Generate unique step name using the manager
-        unique_step_name = step_name_manager.get_unique_name(step_name)
-        
-        return unique_step_name, code_content, description
-        
-    except Exception as e:
-        logger.error(f"Error decoding step content: {e}")
-        # Fallback to basic parsing
-        fallback_name = step_name_manager.get_unique_name(content[:50] + "..." if len(content) > 50 else content)
-        return fallback_name, "", ""
-
-def create_api_payload(settings: ChatSettings) -> dict:
-    """Create API payload from settings"""
-    message_history = cl.chat_context.to_openai()
-    return {
-        "messages": message_history[-10:],
-        "max_tokens": settings.max_tokens,
-        "temperature": settings.temperature,
-        "research": settings.research,
-        "planning": settings.planning,
-        "include_web_search": settings.web_search,
-        "include_ytb_search": settings.ytb_search,
-        "include_mcp_server": settings.mcp_server,
-        "include_ai_search": settings.ai_search,
-        "multi_agent_type": settings.multi_agent_type,
-        "search_engine": settings.search_engine,
-        "stream": True,
-        "locale": settings.language,
-        "verbose": settings.verbose,
-    }
-
-async def handle_error_response(msg: cl.Message, error_type: str, error_msg: str):
-    """Handle different types of errors uniformly"""
-    full_msg = f"❌ **{error_type}**: {error_msg}"
-    await safe_stream_token(msg, full_msg)
-    logger.error(f"{error_type}: {error_msg}")
 
 async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
@@ -879,7 +729,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                         await safe_send_step(current_tool_step)
                                     
                                     # Decode step content (name, code, description)
-                                    step_name, code_content, description = decode_step_content(step_content)
+                                    step_name, code_content, description = decode_step_content(step_content, step_name_manager)
                                     
                                     # Create new step for each tool operation with appropriate types
                                     step_type = "tool"
@@ -1062,34 +912,79 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
 @cl.on_message
 async def main(message: cl.Message):
     """Handle incoming messages"""
+    logger.info(f"📨 Message received - Content: '{message.content[:50] if message.content else 'EMPTY'}...'")
+    
+    language = get_chat_profile_language()
+    
+    await ensure_chat_settings_ui(language, force=True)
+    
     settings = cl.user_session.get("settings")
     if not settings:
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
     
-    # Check for file attachments (try multiple possible attributes)
-    # Collect attachments uniformly
+    # ✨ 최우선: 빈 메시지 체크 (스타터 클릭으로 인한 빈 메시지 필터링)
+    if not message.content or message.content.strip() == "":
+        logger.info("📭 Empty message received - checking for file attachments only")
+        
+        # 파일이 첨부되었는지 확인
+        attachments = (getattr(message, "elements", None) or 
+                      getattr(message, "files", None) or 
+                      getattr(message, "attachments", None))
+        
+        if attachments:
+            logger.info(f"📎 File attachments found: {len(attachments)} files")
+            # 파일만 있는 경우 업로드 처리
+            await handle_file_upload(attachments, settings)
+        else:
+            logger.info("🚫 No content and no attachments - ignoring message completely")
+        
+        return  # ✨ 여기서 완전히 종료 - 백엔드 호출 없음
+    
+    logger.info(f"✅ Valid message with content - processing...")
+    
+    # Check for file attachments with text content
     attachments = (getattr(message, "elements", None) or 
                   getattr(message, "files", None) or 
                   getattr(message, "attachments", None))
     
+    # ✨ 파일 첨부가 없는 경우에만 guide-only 스타터 체크
+    if not attachments:
+        guide_only_category = find_starter_category_for_prompt(language, message.content)
+        if guide_only_category:
+            logger.info(
+                f"🛑 Guide-only starter prompt detected for category '{guide_only_category}'. "
+                "Skipping backend call - message already displayed."
+            )
+            return
+    
     uploaded = None
    
     if attachments:
+        logger.info(f"📎 Processing {len(attachments)} file attachments with text content")
         uploaded = await handle_file_upload(attachments, settings)
         # If only files (no textual content), stop here
+        # This should never happen due to the check above, but keep for safety
         if (not message.content) or (message.content.strip() == ""):
+            logger.warning("⚠️ Content became empty after file upload - stopping")
             return
     
     message_content = message.content
     
     # Provide light feedback if user sent text along with freshly uploaded files
     if uploaded and message_content:
+        logger.info("📎 Files uploaded with text content - processing both")
         await cl.Message(content="📎 첨부한 파일을 처리한 후 답변을 생성합니다...").send()
         await stream_chat_with_api(message.content, settings)
+        return  # ✨ 중복 호출 방지
 
-    # Process the message with streaming
+    # Process the message with streaming (only if we reach here)
+    logger.info("💬 Processing text message without files")
     await stream_chat_with_api(message.content, settings)
+
+# ============================================================================
+# Action Callbacks - 통합 및 간소화
+# ============================================================================
 
 @cl.action_callback("clear_chat")
 async def on_action(action: cl.Action):
@@ -1103,79 +998,88 @@ async def on_action(action: cl.Action):
     # Return success
     return "Chat cleared successfully"
 
-
 @cl.action_callback("help_action")
 async def on_help_action(action: cl.Action):
     """Handle help action"""
-    help_message = """
-📖 **도움말**
-
-🔹 **파일 업로드 방법:**
-1️⃣ 채팅 입력창 하단의 📎 버튼 클릭
-2️⃣ "파일업로드" 명령어 입력
-3️⃣ 위의 "📎 파일 업로드" 버튼 클릭
-
-🔹 **지원 파일 형식:** PDF, DOCX, TXT
-🔹 **업로드 제한:** 최대 10개 파일, 각각 50MB 이하
-
-🔹 **사용법:**
-- 파일 업로드 후 관련 질문을 입력하세요
-- 예: "이 문서의 주요 내용을 요약해주세요"
-
-"""
+    settings = cl.user_session.get("settings")
+    language = getattr(settings, "language", "ko-KR") if settings else "ko-KR"
+    ui_text = UI_TEXT[language]
+    help_message = ui_text.get("starter_message", "Help information not available")
     
     await cl.Message(content=help_message).send()
     return "Help displayed"
 
+
 @cl.action_callback("show_starters_action")
 async def on_show_starters_action(action: cl.Action):
     """Handle show starters action"""
-    current_profile = cl.user_session.get("chat_profile", "Korean")
-    language = "ko-KR" if current_profile == "Korean" else "en-US"
-    starters = get_starters_for_language(language)
-    
-    # Send starters as a message with action buttons
-    starters_message = "📋 **Quick Start Options:**\n\n"
-    actions = []
-
-    for i, starter in enumerate(starters):
-        # Get emoji from category mapping
-        if i == 0:  # question_Microsoft
-            emoji = "⤴️"
-        elif i == 1:  # product_info
-            emoji = "💡"
-        elif i == 2:  # recommendation
-            emoji = "❓"
-        else:
-            emoji = "🤖"
-            
-        starters_message += f"{emoji} **{starter.label}**\n"
-        actions.append(
-            cl.Action(
-                name=f"starter_{i}",
-                payload={"message": starter.message, "label": starter.label},
-                label=f"{emoji} {starter.label}",
-                description=f"Use starter: {starter.label}"
-            )
-        )
-    
-    await cl.Message(content=starters_message, actions=actions).send()
+    language = get_chat_profile_language()
+    await send_starters_as_actions(language)
     return "Starters displayed"
 
 @cl.action_callback("starter_0")
 @cl.action_callback("starter_1")
 @cl.action_callback("starter_2")
 async def on_starter_action(action: cl.Action):
-    """Handle starter action clicks"""
-    # Extract message from payload dictionary
+    """통합 스타터 액션 핸들러 - 모든 스타터를 처리
+    
+    이제 starter_0~2 모두 이 하나의 핸들러로 처리됩니다.
+    StarterConfig를 통해 각 스타터의 동작이 결정됩니다.
+    """
+    # Payload에서 정보 추출
+    language = get_chat_profile_language()
+    ensure_chat_settings_ui(language=language, force=True)
+    
     message_content = action.payload.get("message", "")
     starter_label = action.payload.get("label", "Unknown")
+    starter_index = action.payload.get("index", 0)
+    category = action.payload.get("category", "")
+    send_to_backend = action.payload.get("send_to_backend", True)
     
-    logger.info(f"🎯 Starter action triggered: {action.name}")
-    logger.info(f"📝 Message content: {message_content[:100]}...")
-    logger.info(f"🏷️ Starter label: {starter_label}")
+    logger.info("=" * 60)
+    logger.info(f"🎬 Starter action triggered: {starter_label}")
+    logger.info(f"   - Index: {starter_index}, Category: {category}")
+    logger.info(f"   - Send to backend: {send_to_backend}")
+    logger.info(f"   - Message length: {len(message_content) if message_content else 0}")
+    logger.info(f"   - Message preview: '{message_content[:50] if message_content else 'EMPTY'}...'")
+    logger.info("=" * 60)
     
-    # First, add the user message to chat history
+    # ✨ send_to_backend에 따라 분기 처리
+    if not send_to_backend:
+        # 가이드 메시지만 표시 (백엔드 호출 없음)
+        logger.info(f"📋 Showing guide message for '{category}' (no backend call)")
+        language = get_user_language()
+        guide_message = get_starter_prompt(language, category)
+        
+        if guide_message:
+            await cl.Message(content=guide_message).send()
+            logger.info(f"✅ Displayed guide message for '{category}'")
+        else:
+            # 폴백 메시지 (EXAMPLE_PROMPTS에서 찾지 못한 경우)
+            logger.warning(f"⚠️ No guide message found for '{category}' in language '{language}'")
+            if language == "ko-KR":
+                fallback = f"ℹ️ **{starter_label}** 가이드를 찾을 수 없습니다."
+            else:
+                fallback = f"ℹ️ Cannot find guide for **{starter_label}**."
+            await cl.Message(content=fallback).send()
+        
+        return f"Guide displayed for {starter_label}"
+    
+    # 백엔드로 전송해야 하는 경우
+    logger.info(f"🚀 Processing starter with backend call: {starter_label}")
+    
+    # 빈 메시지 검증
+    if not message_content or message_content.strip() == "":
+        logger.warning(f"⚠️ Empty message for backend starter '{starter_label}' - aborting")
+        language = get_user_language()
+        
+        if language == "ko-KR":
+            await cl.Message(content=f"⚠️ **{starter_label}**: 메시지가 비어있습니다.").send()
+        else:
+            await cl.Message(content=f"⚠️ **{starter_label}**: Message is empty.").send()
+        return f"Empty message for {starter_label}"
+    
+    # 사용자 메시지를 채팅 히스토리에 추가
     user_message = cl.Message(
         author="User",
         content=message_content,
@@ -1183,26 +1087,30 @@ async def on_starter_action(action: cl.Action):
     )
     await user_message.send()
     
-    # Get current settings
+    # 설정 가져오기 또는 생성
     settings = cl.user_session.get("settings")
     if not settings:
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
     
-    # Process the starter message
+    # 백엔드 API 호출
+    logger.info(f"📤 Sending to backend: {len(message_content)} characters")
     await stream_chat_with_api(message_content, settings)
     
-    return f"Processing starter: {starter_label}"
+    logger.info(f"✅ Processed starter: {starter_label}")
+    return f"Processed starter: {starter_label}"
 
 @cl.action_callback("check_upload_status")
 async def on_check_upload_status(action: cl.Action):
     """모든 활성 업로드의 최신 상태 요약 출력"""
-    if not active_uploads:
+    all_uploads = upload_manager.get_all_uploads()
+    
+    if not all_uploads:
         await cl.Message(content="📋 **현재 진행 중인 업로드가 없습니다.**").send()
         return "No active uploads"
+    
     lines = ["📊 **현재 진행 중인 업로드 목록**\n"]
-    for upload_id, info in active_uploads.items():
-        state_line = ""
+    for upload_id, info in all_uploads.items():
         # 메시지 객체의 최신 content 일부 활용
         msg_obj = info.get("message")
         preview = ""
@@ -1211,8 +1119,111 @@ async def on_check_upload_status(action: cl.Action):
         lines.append(f"• {upload_id[:8]} ({', '.join(info['files'])})")
         if preview:
             lines.append(f"  ↳ {preview}")
+    
     await cl.Message(content="\n".join(lines)).send()
     return "Listed active uploads"
     
-if __name__ == "__main__":
-    cl.run()
+async def ensure_chat_settings_ui(language: str, force: bool = False):
+    """Guarantee the settings panel appears even after reconnects."""
+    already_sent = cl.user_session.get("chat_settings_sent", False)
+    if already_sent and not force:
+        logger.info("⚙️ Chat settings already sent, skipping...")
+        return
+
+    logger.info(f"⚙️ Sending chat settings UI for language: {language}")
+    
+    # WebSocket 연결 대기
+    max_retries = 3
+    retry_delay = 0.2
+    
+    for attempt in range(max_retries):
+        try:
+            ui_text = UI_TEXT.get(language, UI_TEXT.get("en-US", {}))
+            
+            settings_components = [
+                cl.input_widget.Switch(
+                    id="research",
+                    label=ui_text.get("research_title", "Research"),
+                    initial=True,
+                    tooltip=ui_text.get("research_desc", "")
+                ),
+                cl.input_widget.Switch(
+                    id="planning",
+                    label=ui_text.get("planning_title", "Planning"),
+                    initial=False,
+                    tooltip=ui_text.get("planning_desc", "")
+                ),
+                cl.input_widget.Switch(
+                    id="ai_search",
+                    label=ui_text.get("ai_search_title", "AI Search"),
+                    initial=True,
+                    tooltip=ui_text.get("ai_search_desc", "")
+                ),
+                cl.input_widget.Select(
+                    id="multi_agent_type",
+                    label=ui_text.get("multi_agent_type_title", "Multi-Agent Type"),
+                    initial_index=0,
+                    values=list(MULTI_AGENT_TYPES.keys()),
+                    tooltip=ui_text.get("multi_agent_type_desc", "")
+                ),
+                cl.input_widget.Switch(
+                    id="verbose",
+                    label=ui_text.get("verbose_title", "Verbose"),
+                    initial=True,
+                    tooltip=ui_text.get("verbose_desc", "")
+                ),
+                cl.input_widget.Switch(
+                    id="show_starters",
+                    label="📋 Show Quick Start Options",
+                    initial=False,
+                    tooltip="Toggle to show/hide quick start prompts"
+                ),
+                cl.input_widget.Slider(
+                    id="max_tokens",
+                    label="Max Tokens",
+                    initial=4000,
+                    min=1000,
+                    max=8000,
+                    step=500,
+                    tooltip="Maximum number of tokens in response"
+                ),
+                cl.input_widget.Slider(
+                    id="temperature",
+                    label="Temperature",
+                    initial=0.7,
+                    min=0.0,
+                    max=1.0,
+                    step=0.1,
+                    tooltip="Controls randomness in response generation"
+                )
+            ]
+
+            await cl.ChatSettings(settings_components).send()
+            cl.user_session.set("chat_settings_sent", True)
+            logger.info(f"✅ Chat settings UI sent successfully (attempt {attempt + 1}/{max_retries})")
+            
+            # 안정화 지연
+            await asyncio.sleep(0.15)
+            return
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Attempt {attempt + 1}/{max_retries} failed to send chat settings: {e}")
+            
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"❌ Failed to send chat settings after {max_retries} attempts: {e}")
+                # 실패 시 플래그 리셋
+                cl.user_session.set("chat_settings_sent", False)
+
+async def _delayed_settings_retry(language: str, delay: float = 1.0, max_attempts: int = 2):
+    """Background retry to ensure the settings panel eventually appears."""
+    for attempt in range(max_attempts):
+        await asyncio.sleep(delay * (attempt + 1))
+        logger.info(f"🔁 Delayed settings retry attempt {attempt + 1}/{max_attempts}")
+        await ensure_chat_settings_ui(language, force=True)
+        if cl.user_session.get("chat_settings_sent"):
+            logger.info("✅ Delayed retry succeeded – settings panel is visible.")
+            return
+    logger.error("❌ Delayed retries exhausted – settings panel still missing.")

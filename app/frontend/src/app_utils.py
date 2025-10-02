@@ -10,6 +10,52 @@ import chainlit as cl
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# Starter Configuration - 중앙 관리
+# ============================================================================
+
+class StarterConfig:
+    """Centralized starter configuration"""
+    
+    # Starter categories in order
+    CATEGORIES = ["upload", "report", "ask_questions"]
+    
+    # Category configuration with emoji and images
+    CATEGORY_CONFIG = {
+        "upload": {
+            "emoji": "⤴️",
+            "image": "/public/images/2934_color.png",
+            "send_to_backend": False  # Upload starter doesn't call backend
+        },
+        "report": {
+            "emoji": "💡",
+            "image": "/public/images/1f4a1_color.png",
+            "send_to_backend": True
+        },
+        "ask_questions": {
+            "emoji": "❓",
+            "image": "/public/images/2753_color.png",
+            "send_to_backend": True
+        }
+    }
+    
+    @classmethod
+    def get_category_config(cls, category: str) -> Dict[str, Any]:
+        """Get configuration for a category"""
+        return cls.CATEGORY_CONFIG.get(category, {
+            "emoji": "🤖",
+            "image": None,
+            "send_to_backend": True
+        })
+    
+    @classmethod
+    def should_send_to_backend(cls, category_index: int) -> bool:
+        """Check if starter should trigger backend call"""
+        if 0 <= category_index < len(cls.CATEGORIES):
+            category = cls.CATEGORIES[category_index]
+            return cls.CATEGORY_CONFIG.get(category, {}).get("send_to_backend", True)
+        return True
+
 class ChatSettings:
     """Chat settings for managing user preferences"""
     def __init__(self):
@@ -104,52 +150,67 @@ class StepNameManager:
             }
 
 class UploadManager:
-    """Manage active file uploads"""
+    """Manage active uploads with thread-safe operations"""
     def __init__(self):
-        self.active_uploads = {}  # { upload_id: { files: [...], message: cl.Message, task: asyncio.Task } }
+        self._uploads = {}
+        self._lock = threading.Lock()
     
     def add_upload(self, upload_id: str, files: List[str], message: cl.Message, task):
-        """Add new upload to tracking"""
-        self.active_uploads[upload_id] = {
-            "files": files,
-            "message": message,
-            "task": task,
-            "examples_sent": False
-        }
-        logger.info(f"[upload:{upload_id}] 업로드 상태 추적 시작 (files={files})")
+        """Add a new upload to tracking"""
+        with self._lock:
+            self._uploads[upload_id] = {
+                "files": files,
+                "message": message,
+                "task": task,
+                "examples_sent": False,
+                "created_at": datetime.now()
+            }
     
-    def get_upload(self, upload_id: str) -> dict:
-        """Get upload info by ID"""
-        return self.active_uploads.get(upload_id, {})
+    def get_upload(self, upload_id: str) -> Dict:
+        """Get upload information"""
+        with self._lock:
+            return self._uploads.get(upload_id)
+    
+    def has_active_task(self, upload_id: str) -> bool:
+        """Check if upload has an active task"""
+        with self._lock:
+            entry = self._uploads.get(upload_id)
+            return entry is not None and entry.get("task") is not None
+    
+    def clear_task(self, upload_id: str):
+        """Clear task for an upload"""
+        with self._lock:
+            if upload_id in self._uploads:
+                self._uploads[upload_id]["task"] = None
+    
+    def set_examples_sent(self, upload_id: str):
+        """Mark that example questions have been sent"""
+        with self._lock:
+            if upload_id in self._uploads:
+                self._uploads[upload_id]["examples_sent"] = True
     
     def remove_upload(self, upload_id: str):
         """Remove upload from tracking"""
-        if upload_id in self.active_uploads:
-            del self.active_uploads[upload_id]
-            logger.info(f"[upload:{upload_id}] 업로드 추적 완료")
+        with self._lock:
+            if upload_id in self._uploads:
+                del self._uploads[upload_id]
     
-    def has_active_task(self, upload_id: str) -> bool:
-        """Check if upload has active task"""
-        return upload_id in self.active_uploads and self.active_uploads[upload_id].get("task")
-    
-    def set_examples_sent(self, upload_id: str):
-        """Mark examples as sent for upload"""
-        if upload_id in self.active_uploads:
-            self.active_uploads[upload_id]["examples_sent"] = True
-    
-    def clear_task(self, upload_id: str):
-        """Clear task for upload"""
-        if upload_id in self.active_uploads:
-            self.active_uploads[upload_id]["task"] = None
-    
-    def get_all_uploads(self) -> dict:
+    def get_all_uploads(self) -> Dict:
         """Get all active uploads"""
-        return self.active_uploads.copy()
+        with self._lock:
+            return dict(self._uploads)
 
-# Utility functions
-def decode_step_content(content: str) -> Tuple[str, str, str]:
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def decode_step_content(content: str, step_name_manager) -> Tuple[str, str, str]:
     """
     Decode step content and generate unique step name.
+    
+    Args:
+        content: The step content to decode
+        step_name_manager: StepNameManager instance for generating unique names
     
     Returns:
         tuple: (step_name, code_content, description)
@@ -183,13 +244,15 @@ def decode_step_content(content: str) -> Tuple[str, str, str]:
                     logger.warning(f"Failed to decode code content: {e}")
                     code_content = parts[1].strip()  # Use raw content as fallback
         
-        # Return original name without uniqueness management for better UI matching
-        return step_name, code_content, description
+        # Generate unique step name using the manager
+        unique_step_name = step_name_manager.get_unique_name(step_name)
+        
+        return unique_step_name, code_content, description
         
     except Exception as e:
         logger.error(f"Error decoding step content: {e}")
         # Fallback to basic parsing
-        fallback_name = content[:50] + "..." if len(content) > 50 else content
+        fallback_name = step_name_manager.get_unique_name(content[:50] + "..." if len(content) > 50 else content)
         return fallback_name, "", ""
 
 def create_api_payload(settings: ChatSettings) -> dict:

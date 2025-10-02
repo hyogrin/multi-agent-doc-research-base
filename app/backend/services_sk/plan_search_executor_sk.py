@@ -169,7 +169,7 @@ class PlanSearchExecutorSK:
         search_engine: SearchEngine = SearchEngine.BING_SEARCH_CRAWLING,
         stream: bool = False,
         elapsed_time: bool = True,
-        locale: Optional[str] = "ko-KR",
+        locale: Optional[str] = "en-US",
         include_web_search: bool = True,
         include_ytb_search: bool = True,
         include_mcp_server: bool = True,
