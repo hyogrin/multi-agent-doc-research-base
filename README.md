@@ -1,5 +1,5 @@
 # Multi-Agent Doc Research
-An AI-powered chatbot that leverages planning and search to provide accurate and context-aware responses to user queries. Built with FastAPI, Azure OpenAI, and Gradio, this project demonstrates advanced techniques for enhancing LLM applications with modular design, evaluation support, and flexible UI options.
+An AI-powered chatbot that leverages planning and search to provide accurate and context-aware responses to user queries. Built with FastAPI, Azure OpenAI, and Chainlit, this project demonstrates advanced techniques for enhancing LLM applications with agentic patterns, multi-agents, modular design and evaluation support.
 
 ![multi-agent-doc-research-architecture-Page-1.jpg](/images/multi-agent-doc-research-architecture-Page-1.jpg)
 
