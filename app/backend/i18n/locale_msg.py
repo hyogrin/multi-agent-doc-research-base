@@ -28,6 +28,7 @@ LOCALE_MESSAGES = {
         "review_research": "리서치 결과 검토중...",
         "context_length": "context log는 2000자까지 지원합니다. 추가적인 정보는 검색 결과를 통해 확인해주세요.",
         "intent_small_talk": "User Intent - 캐쥬얼 대화입니다.",
+        "elapsed_time": "소요 시간",
         
     },
     "en-US": {
@@ -57,6 +58,7 @@ LOCALE_MESSAGES = {
         "review_research": "Reviewing research ...",
         "context_length": "context log supports up to 2000 characters. For additional information, please refer to the search results.",
         "intent_small_talk": "User Intent - small talk.",
+        "elapsed_time": "Elapsed Time",
         
     }
 }

@@ -25,20 +25,22 @@ dependencies = [
     "beautifulsoup4==4.12.2",
     "langchain==0.3.25",
     "azure-ai-projects==1.0.0",
-    "azure-ai-agents==1.2.0b3",
+    "azure-ai-agents==1.2.0b5",
     "azure-identity==1.23.0",
     "pytz==2025.2",
-    "azure-ai-evaluation==1.8.0",
+    "azure-ai-evaluation==1.11.0",
     "matplotlib==3.10.3", 
     "semantic-kernel==1.37.0",
     "aiohttp>=3.8.0",
     "jinja2>=3.0.0",
     "beautifulsoup4==4.12.2",
-    "mcp==1.12.3",
+    "mcp==1.13.1",
     "gradio==5.33.1",
     "chainlit==2.8.0",
     "azure-search-documents==11.5.3",
     "azure-ai-documentintelligence==1.0.2",
+    "agent-framework==1.0.0b251007",
+    "tiktoken==0.12.0", 
 ]
 
 [project.optional-dependencies]
@@ -52,7 +54,8 @@ dev = [
     "pytest-tornasync>=0.6.0",
     "pytest-trio>=0.8.0",
     "pytest-twisted>=1.14.0",
-    "azure-ai-evaluation[redteam]==1.8.0", 
+    "azure-ai-evaluation==1.11.0", 
+    "tiktoken==0.12.0", 
     "ipykernel",
     
 ]

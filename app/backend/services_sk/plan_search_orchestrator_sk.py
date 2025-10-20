@@ -40,7 +40,7 @@ RESEARCH_REVIEWER_PROMPT = load_prompt(os.path.join(current_dir, "..", "prompts"
 GENERAL_PLANNER_PROMPT = load_prompt(os.path.join(current_dir, "..", "prompts", "general_planner_prompt.yaml"), encoding="utf-8")
 GENERAL_ANSWER_PROMPT = load_prompt(os.path.join(current_dir, "..", "prompts", "general_answer_prompt.yaml"), encoding="utf-8")
 
-class PlanSearchExecutorSK:
+class PlanSearchOrchestratorSK:
     """
     Plan and Search Executor using Semantic Kernel.
     """
@@ -315,8 +315,6 @@ class PlanSearchExecutorSK:
                     search_queries = [enriched_query]
                     sub_topics = []
                     sub_topics.append({"sub_topic": "research report", "queries": [enriched_query]})
-                    
-
                     
             except Exception as e:
                 logger.error(f"Error during intent analysis: {e}")

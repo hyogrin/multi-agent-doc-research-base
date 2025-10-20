@@ -11,7 +11,8 @@ from typing import List, Dict, Optional
 from utils.enum import SearchEngine
 from config.config import Settings
 from model.models import ChatResponse, PlanSearchRequest, FileUploadResponse
-from services_sk.plan_search_executor_sk import PlanSearchExecutorSK
+from services_sk.plan_search_orchestrator_sk import PlanSearchOrchestratorSK
+from services_afw.plan_search_orchestrator_afw import PlanSearchOrchestratorAFW
 from services_sk.unified_file_upload_plugin import UnifiedFileUploadPlugin
 
 import logging
@@ -43,7 +44,7 @@ semantic_kernel_loggers = [
 ]
 
 for logger_name in semantic_kernel_loggers:
-    logging.getLogger(logger_name).setLevel(logging.WARNING)
+    logging.getLogger(logger_name).setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,48 @@ settings = Settings()
 # Global upload status tracking (in production, use Redis or database)
 upload_status_tracker: Dict[str, Dict] = {}
 
+# Global orchestrator instances (singleton pattern for memory efficiency)
+_orchestrator_sk: Optional[PlanSearchOrchestratorSK] = None
+_orchestrator_afw: Optional[PlanSearchOrchestratorAFW] = None
+
+
+def get_orchestrator_sk() -> PlanSearchOrchestratorSK:
+    """Get or create Semantic Kernel orchestrator instance (singleton)"""
+    global _orchestrator_sk
+    if _orchestrator_sk is None:
+        logger.info("🔧 Initializing Semantic Kernel (SK) orchestrator (singleton)")
+        _orchestrator_sk = PlanSearchOrchestratorSK(settings)
+    return _orchestrator_sk
+
+
+def get_orchestrator_afw() -> PlanSearchOrchestratorAFW:
+    """Get or create Agent Framework orchestrator instance (singleton)"""
+    global _orchestrator_afw
+    if _orchestrator_afw is None:
+        logger.info("🔧 Initializing Agent Framework (AFW) orchestrator (singleton)")
+        _orchestrator_afw = PlanSearchOrchestratorAFW(settings)
+    return _orchestrator_afw
+
+
 @app.router.lifespan_context
 async def lifespan(app: FastAPI):
     logger.info("Starting up Microsoft Chatbot API...")
     
+    # Pre-initialize orchestrators for faster first request
+    try:
+        get_orchestrator_sk()
+        get_orchestrator_afw()
+        logger.info("✅ Orchestrators pre-initialized successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to pre-initialize orchestrators: {e}")
+    
     yield
     
     logger.info("Shutting down Microsoft Chatbot API...")
+    # Clean up orchestrators if needed
+    global _orchestrator_sk, _orchestrator_afw
+    _orchestrator_sk = None
+    _orchestrator_afw = None
 
 
 @app.get("/health")
@@ -317,9 +353,21 @@ async def plan_search_info():
 async def plan_search_endpoint(
     request: PlanSearchRequest, 
 ):
-    plan_search_executor = None
+    """
+    Process chat request using appropriate orchestrator based on multi_agent_type.
+    Uses singleton pattern for efficient memory usage.
+    """
     try:
-        plan_search_executor = PlanSearchExecutorSK(settings)
+        # Select orchestrator based on multi_agent_type prefix
+        # Check if it starts with "MS Agent Framework" for AFW, otherwise use SK
+        multi_agent_type = request.multi_agent_type or ""
+        
+        if multi_agent_type.startswith("afw") or "Agent Framework" in multi_agent_type:
+            logger.info(f"📊 Using Agent Framework (AFW) orchestrator for: {multi_agent_type}")
+            plan_search_executor = get_orchestrator_afw()
+        else:
+            logger.info(f"📊 Using Semantic Kernel (SK) orchestrator for: {multi_agent_type}")
+            plan_search_executor = get_orchestrator_sk()
         
         if request.stream:
             return StreamingResponse(
@@ -346,7 +394,6 @@ async def plan_search_endpoint(
             request.messages,
             request.max_tokens,
             request.temperature,
-            request.query_rewrite,
             request.planning,
             request.search_engine,
             stream=False,
