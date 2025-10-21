@@ -210,41 +210,11 @@ class GroupChattingExecutor(Executor):
                     max_tokens=max_tokens,
                     ctx=ctx
                 )
-
-        #         {
-        #     "status": "success" if error_info is None else "error",
-        #     "sub_topic": sub_topic,
-        #     "question": question,
-        #     "final_answer": answer_markdown,
-        #     "reviewer_score": reviewer_score if 'reviewer_score' in locals() else "N/A",
-        #     "ready_to_publish": ready_to_publish if 'ready_to_publish' in locals() else False,
-        #     "rounds_used": iteration,
-        #     "writer_rounds": writer_count,
-        #     "reviewer_rounds": reviewer_count,
-        #     "error": error_info
-        # }
-                
-                all_results.append(result)
-                
-                # Yield completion for this sub-topic
-                status = result.get("status", "unknown")
-                if status == "success":
-                    await ctx.yield_output(f"data: ### ✅ Completed '{sub_topic_name}' [{idx}/{len(sub_topics)}]\n\n")
-                else:
-                    await ctx.yield_output(f"data: ### ❌ Failed '{sub_topic_name}' [{idx}/{len(sub_topics)}]\n\n")
-            
-            # Yield overall completion
-            success_count = sum(1 for r in all_results if r.get("status") == "success")
-            await ctx.yield_output(f"data: ### ✅ Group chat completed: {success_count}/{len(all_results)} successful\n\n")
-            
-            # ✅ 마지막 노드이므로 직접 streaming (orchestrator가 받을 수 있음)
-            RESULT_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
-
-            
-            for idx, result in enumerate(all_results, 1):
+    
                 sub_topic_name = result.get("sub_topic", f"Topic {idx}")
                 status = result.get("status", "unknown")
-                
+                RESULT_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
+
                 if status == "success":
                     final_answer = result.get("final_answer", "")
                     reviewer_score = result.get("reviewer_score", "N/A")
@@ -270,13 +240,23 @@ class GroupChattingExecutor(Executor):
                         await asyncio.sleep(0.01)
                     
                     await ctx.yield_output("\n\n")
+                
                 else:
                     # Failed sub-topic
                     error_msg = result.get("error", "Unknown error")
                     await ctx.yield_output(f"\n## {sub_topic_name} ❌\n")
                     await ctx.yield_output(f"Error: {error_msg}\n\n")
+                
+                # Yield completion for this sub-topic
+                status = result.get("status", "unknown")
+                if status == "success":
+                    await ctx.yield_output(f"data: ### ✅ Completed '{sub_topic_name}' [{idx}/{len(sub_topics)}]\n\n")
+                else:
+                    await ctx.yield_output(f"data: ### ❌ Failed '{sub_topic_name}' [{idx}/{len(sub_topics)}]\n\n")
             
-            logger.info("✅ Group chat streaming complete")
+            # Yield overall completion
+            success_count = sum(1 for r in all_results if r.get("status") == "success")
+            await ctx.yield_output(f"data: ### ✅ Group chat completed: {success_count}/{len(all_results)} successful\n\n")
         
         except Exception as e:
             error_msg = f"Group chat failed: {str(e)}"
@@ -378,30 +358,15 @@ class GroupChattingExecutor(Executor):
                         await ctx.yield_output(f"data: ### 🔍 Reviewer phase for '{sub_topic}'\n\n")
                     await ctx.yield_output(f"data: ### 🔍 Reviewer round {reviewer_count}: {sub_topic}\n\n")
                 
-                # Get response with keepalive during long operations
+                # Get response from agent
                 last_message_text = messages[-1].text if messages else task
                 
-                # ⭐ Send keepalive every 10 seconds while waiting for response
-                import asyncio
-                
-                async def keepalive_sender():
-                    """Send periodic keepalive messages during long operations."""
-                    while True:
-                        await asyncio.sleep(10)  # Every 10 seconds
-                        await ctx.yield_output(f"data: : \n\n")  # SSE comment keepalive
-                
-                # Start keepalive task
-                keepalive_task = asyncio.create_task(keepalive_sender())
-                
                 try:
+                    # ✅ 직접 호출 (keepalive 없이)
                     response = await current_agent.run(last_message_text)
-                finally:
-                    # Stop keepalive
-                    keepalive_task.cancel()
-                    try:
-                        await keepalive_task
-                    except asyncio.CancelledError:
-                        pass
+                except Exception as e:
+                    logger.error(f"Agent {current_agent.name} failed: {e}")
+                    raise
 
                 # ✅ Send TTFT event on first response
                 if not first_token_sent:
