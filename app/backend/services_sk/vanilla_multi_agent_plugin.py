@@ -18,6 +18,7 @@ from openai import AsyncAzureOpenAI
 from semantic_kernel.functions import kernel_function
 
 from config.config import Settings
+from utils.json_control import clean_and_validate_json
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,18 @@ class MultiAgentPlugin:
         final_answers = {}
         for item in reviewer_results:
             sub_topic = item["sub_topic"]
+            
+            # ✅ Extract citations safely from writer or reviewer parsed data
+            citations = []
+            if item["review"]["status"] == "success" and item["review"]["parsed"]:
+                # Prefer citations from reviewer if available
+                citations = item["review"]["parsed"].get("citations", [])
+                if not citations and item["writer"]["parsed"]:
+                    # Fallback to writer's citations
+                    citations = item["writer"]["parsed"].get("citations", [])
+            elif item["writer"]["parsed"]:
+                citations = item["writer"]["parsed"].get("citations", [])
+            
             # Use revised answer if available, otherwise use draft
             if item["review"]["status"] == "success" and item["review"]["parsed"]:
                 revised_answer = item["review"]["parsed"].get("revised_answer_markdown", "")
@@ -268,6 +281,7 @@ class MultiAgentPlugin:
                 await progress_callback("final_answer", {
                     "sub_topic": sub_topic,
                     "answer": revised_answer,
+                    "citations": citations,
                     "ready_to_publish": item["review"].get("ready_to_publish", False),
                     "score": item["review"]["parsed"].get("reviewer_evaluation_score", "N/A") if item["review"].get("parsed") else "N/A"
                 })
@@ -392,6 +406,16 @@ class MultiAgentPlugin:
         # Stream all final answers regardless of ready_to_publish status
         for item in reviewer_results:
             sub_topic = item["sub_topic"]
+            
+            # ✅ Extract citations safely
+            citations = []
+            if item["review"]["status"] == "success" and item["review"]["parsed"]:
+                citations = item["review"]["parsed"].get("citations", [])
+                if not citations and item["writer"]["parsed"]:
+                    citations = item["writer"]["parsed"].get("citations", [])
+            elif item["writer"]["parsed"]:
+                citations = item["writer"]["parsed"].get("citations", [])
+            
             # Use revised answer if available, otherwise use draft
             if item["review"]["status"] == "success" and item["review"]["parsed"]:
                 revised_answer = item["review"]["parsed"].get("revised_answer_markdown", "")
@@ -634,7 +658,17 @@ class MultiAgentPlugin:
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content.strip()
-            parsed = json.loads(content)
+            
+            # ✅ Use clean_and_validate_json for robust parsing
+            try:
+                cleaned_content = clean_and_validate_json(content)
+                parsed = json.loads(cleaned_content)
+            except Exception as json_err:
+                logger.error(f"[MultiAgent] JSON parsing failed for writer '{task.sub_topic}'")
+                logger.error(f"[MultiAgent] Raw content: {content[:500]}...")
+                logger.error(f"[MultiAgent] Parse error: {json_err}")
+                raise json_err
+            
             return {
                 "question": task.question,
                 "writer": {
@@ -692,7 +726,17 @@ class MultiAgentPlugin:
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content.strip()
-            parsed = json.loads(content)
+            
+            # ✅ Use clean_and_validate_json for robust parsing
+            try:
+                cleaned_content = clean_and_validate_json(content)
+                parsed = json.loads(cleaned_content)
+            except Exception as json_err:
+                logger.error(f"[MultiAgent] JSON parsing failed for reviewer '{task.sub_topic}'")
+                logger.error(f"[MultiAgent] Raw content: {content[:500]}...")
+                logger.error(f"[MultiAgent] Parse error: {json_err}")
+                raise json_err
+            
             ready = bool(parsed.get("ready_to_publish"))
             return {
                 "status": "success",

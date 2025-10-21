@@ -59,11 +59,10 @@ SEARCH_ENGINES = {
 
 # Define the multi_agent_type
 MULTI_AGENT_TYPES = {
-    "Semantic Kernel GroupChat": "sk_group_chat",
-    "Semantic Kernel Magentic(Deep-Research-Agents)": "sk_magentic",
     "MS Agent Framework GroupChat": "afw_group_chat",
     "MS Agent Framework Magentic": "afw_magentic",
-    "MS Agent Framework Custom": "afw_custom_multi_agent",
+    "Semantic Kernel GroupChat": "sk_group_chat",
+    "Semantic Kernel Magentic(Deep-Research-Agents)": "sk_magentic",
     "Vanilla AOAI SDK": "vanilla",
 }
 

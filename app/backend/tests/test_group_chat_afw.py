@@ -10,7 +10,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime
-
+from utils.json_control import clean_and_validate_json
 # Add backend directory to path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
@@ -159,7 +159,7 @@ class TestGroupChattingExecutor:
 }
 ```"""
         
-        cleaned = executor._clean_and_validate_json(markdown_json)
+        cleaned = clean_and_validate_json(markdown_json)
         parsed = json.loads(cleaned)
         assert "sub_topic" in parsed
         assert parsed["sub_topic"] == "Test"
@@ -167,7 +167,7 @@ class TestGroupChattingExecutor:
         # Test with extra text
         text_with_json = 'Here is the answer: {"sub_topic": "Test", "answer": "Response"} Hope this helps!'
         
-        cleaned = executor._clean_and_validate_json(text_with_json)
+        cleaned = clean_and_validate_json(text_with_json)
         parsed = json.loads(cleaned)
         assert "sub_topic" in parsed
     

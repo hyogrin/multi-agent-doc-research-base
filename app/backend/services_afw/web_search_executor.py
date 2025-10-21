@@ -385,7 +385,7 @@ class WebSearchExecutor(Executor):
                 # No search needed
                 await ctx.send_message({
                     **search_data,
-                    "web_search_results": []
+                    "sub_topic_web_contexts": {}  # Changed from web_search_results
                 })
                 return
             
@@ -425,16 +425,16 @@ class WebSearchExecutor(Executor):
             else:
                 await ctx.yield_output(f"data: ### {LOCALE_MSG['search_done']}\n\n") 
            
-            # Add search results to search_data
+            # Add search results to search_data (using SK-compatible key name)
             await ctx.send_message({
                 **search_data,
-                "web_search_results": sub_topic_results
+                "sub_topic_web_contexts": sub_topic_results  # Changed from web_search_results
             })
             
         except Exception as e:
             logger.error(f"WebSearchExecutor: Error during search: {e}")
             await ctx.send_message({
                 **search_data,
-                "web_search_results": {},
+                "sub_topic_web_contexts": {},  # Changed from web_search_results
                 "search_error": str(e)
             })

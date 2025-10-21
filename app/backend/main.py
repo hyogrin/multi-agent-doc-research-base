@@ -27,10 +27,11 @@ log_filename = f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    # handlers=[
-    #     logging.FileHandler(log_filename, encoding='utf-8'),
-    #     logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
-    # ]
+    handlers=[
+        # logging.FileHandler(log_filename, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
+    ],
+    force=True
 )
 
 # Semantic Kernel의 상세한 로그 억제
@@ -360,9 +361,9 @@ async def plan_search_endpoint(
     try:
         # Select orchestrator based on multi_agent_type prefix
         # Check if it starts with "MS Agent Framework" for AFW, otherwise use SK
-        multi_agent_type = request.multi_agent_type or ""
-        
-        if multi_agent_type.startswith("afw") or "Agent Framework" in multi_agent_type:
+        multi_agent_type = request.multi_agent_type or "afw_group_chat"
+        print(f"multi_agent_type: {multi_agent_type}")
+        if multi_agent_type.startswith("MS Agent Framework"):
             logger.info(f"📊 Using Agent Framework (AFW) orchestrator for: {multi_agent_type}")
             plan_search_executor = get_orchestrator_afw()
         else:

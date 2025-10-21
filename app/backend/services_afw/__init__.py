@@ -30,6 +30,7 @@ from services_afw.group_chatting_executor import GroupChattingExecutor
 from services_afw.ai_search_executor import AISearchExecutor
 from services_afw.grounding_executor import GroundingExecutor
 from services_afw.youtube_executor import YouTubeMCPExecutor
+from services_afw.web_search_executor import WebSearchExecutor
 
 __all__ = [
     "PlanSearchOrchestratorAFW",
@@ -37,10 +38,14 @@ __all__ = [
     "AISearchExecutor",
     "GroundingExecutor",
     "YouTubeMCPExecutor",
-    "MultiAgentResearchExecutor",
+    "WebSearchExecutor",
 ]
 
 __all__ = [
     "PlanSearchOrchestratorAFW",
     "GroupChattingExecutor",
+    "AISearchExecutor",
+    "GroundingExecutor",
+    "YouTubeMCPExecutor",
+    "WebSearchExecutor",
 ]

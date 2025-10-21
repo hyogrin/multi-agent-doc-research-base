@@ -110,12 +110,12 @@ class YouTubeMCPExecutor(Executor):
         ctx: WorkflowContext[Dict[str, Any], str]  # Added str for yield_output
     ) -> None:
         """
-        Search YouTube videos using MCP server.
+        Search YouTube videos using MCP server for each sub-topic.
         
         Args:
             search_data: Dictionary with search parameters:
-                - query: Search query string
-                - max_results: Maximum number of results (default: 10)
+                - sub_topics: List of sub-topics with queries
+                - max_results: Maximum number of results per query (default: 10)
             ctx: Workflow context for sending results
         """
         try:
@@ -125,25 +125,29 @@ class YouTubeMCPExecutor(Executor):
             verbose = metadata.get("verbose", False)
             LOCALE_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
             
-            query = search_data.get("query", "")
+            sub_topics = search_data.get("sub_topics", [])
             max_results = search_data.get("max_results", self.max_results)
             
             # ✅ Yield starting message
             await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_YouTube']}\n\n")
             
-            logger.info(f"[YouTubeMCPExecutor] Searching for: {query}")
+            if not sub_topics:
+                # No YouTube search needed
+                await ctx.send_message({
+                    **search_data,
+                    "sub_topic_youtube_contexts": {}
+                })
+                return
+            
+            logger.info(f"[YouTubeMCPExecutor] Searching YouTube for {len(sub_topics)} sub-topics")
             
             if not MCP_AVAILABLE:
                 error_msg = "MCP library not available"
                 logger.error(f"[YouTubeMCPExecutor] {error_msg}")
                 await ctx.send_message({
                     **search_data,
-                    "youtube_results": {
-                        "status": "error",
-                        "message": error_msg,
-                        "videos": [],
-                        "search_query": query
-                    }
+                    "sub_topic_youtube_contexts": {},
+                    "youtube_error": error_msg
                 })
                 return
             
@@ -152,32 +156,51 @@ class YouTubeMCPExecutor(Executor):
                 logger.error(f"[YouTubeMCPExecutor] {error_msg}")
                 await ctx.send_message({
                     **search_data,
-                    "youtube_results": {
-                        "status": "error",
-                        "message": error_msg,
-                        "videos": [],
-                        "search_query": query
-                    }
+                    "sub_topic_youtube_contexts": {},
+                    "youtube_error": error_msg
                 })
                 return
             
-            # Search YouTube videos
-            result = await self._search_youtube_videos(query, max_results)
+            # Search by sub-topic
+            sub_topic_results = {}
             
-            logger.info(f"[YouTubeMCPExecutor] Found {result.get('total_results', 0)} videos")
+            for sub_topic_data in sub_topics:
+                sub_topic_name = sub_topic_data.get("sub_topic", "research")
+                queries = sub_topic_data.get("queries", [])
+                
+                sub_topic_videos = []
+                
+                for query in queries:
+                    logger.info(f"[YouTubeMCPExecutor] Searching YouTube for '{query}' in sub-topic '{sub_topic_name}'")
+                    
+                    # Search YouTube videos
+                    result = await self._search_youtube_videos(query, max_results)
+                    
+                    if result.get("status") == "success" and result.get("videos"):
+                        sub_topic_videos.extend(result["videos"])
+                
+                if sub_topic_videos:
+                    # Store results keyed by sub_topic name
+                    sub_topic_results[sub_topic_name] = {
+                        "status": "success",
+                        "videos": sub_topic_videos,
+                        "total_results": len(sub_topic_videos)
+                    }
+            
+            logger.info(f"[YouTubeMCPExecutor] Completed YouTube search for {len(sub_topic_results)} sub-topics")
             
             # ✅ Yield completion message (SK compatible format with results)
-            if verbose and result.get("videos"):
-                results_str = json.dumps(result, ensure_ascii=False, indent=2)
+            if verbose and sub_topic_results:
+                results_str = json.dumps(sub_topic_results, ensure_ascii=False, indent=2)
                 truncated = results_str[:200] + "... [truncated for display]" if len(results_str) > 200 else results_str
                 await ctx.yield_output(f"data: {send_step_with_code(LOCALE_MSG['YouTube_done'], truncated)}\n\n")
             else:
                 await ctx.yield_output(f"data: ### {LOCALE_MSG['YouTube_done']}\n\n")
             
-            # Send results to next executor
+            # Send results to next executor (using SK-compatible key name)
             await ctx.send_message({
                 **search_data,
-                "youtube_results": result
+                "sub_topic_youtube_contexts": sub_topic_results
             })
             
         except Exception as e:
@@ -185,12 +208,8 @@ class YouTubeMCPExecutor(Executor):
             logger.error(f"[YouTubeMCPExecutor] {error_msg}")
             await ctx.send_message({
                 **search_data,
-                "youtube_results": {
-                    "status": "error",
-                    "message": error_msg,
-                    "videos": [],
-                    "search_query": search_data.get("query", "")
-                }
+                "sub_topic_youtube_contexts": {},
+                "youtube_error": error_msg
             })
     
     async def _search_youtube_videos(

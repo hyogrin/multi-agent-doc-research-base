@@ -18,10 +18,13 @@ template: |
   ----- Scope & Constraints -----
   - Answer the user's overall question THROUGH THE LENS of the given sub_topic: "{sub_topic}".
   - Use ONLY the provided contexts; do NOT invent facts or use prior knowledge.
-  - Cite sources explicitly based on the contexts (URLs or source_ids present in contexts).
+  - Cite sources explicitly based on the contexts. Extract URLs from context entries like:
+  - 'url': 'https://example.com' → use this as source
+  - 'title': 'Document Title' → use this for claim reference
   - Be concise but substantive: clear structure, tight reasoning, evidence-backed claims.
   - Prefer recent data (as of {current_date}) if present in contexts.
-  - Respect token budget: aim under {max_tokens} tokens for "draft_answer_markdown".
+  - Respect token budget: aim under {max_tokens} tokens for 'draft_answer_markdown'.
+  - Don't include any conclusory remarks outside the scope of '{sub_topic}'.
 
   ----- Style Guide (for draft_answer_markdown) -----
   - Markdown allowed: headings (#), bold (**), bullet lists (-) only.
@@ -41,8 +44,8 @@ template: |
     "draft_answer_markdown": "<your drafted answer in markdown, abiding by the style guide>",
     "citations": [
       {{
-        "claim": "<short claim or section it supports>",
-        "source": "<URL or source_id from contexts>"
+        'claim': '<short claim or section it supports>',
+        'source': '<URL or source_id from contexts>'
       }}
     ]
   }}

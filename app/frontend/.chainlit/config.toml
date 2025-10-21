@@ -103,6 +103,8 @@ login_page_image = "/public/images/ai_foundry_background.png"
 # custom_build = "./public/build"
 
 # Override default MUI light theme. (Check theme.ts)
+
+default_avatar_file_url = "/public/avatars/my_assistant.png"
 [UI.theme]
 #layout = "wide"
 #font_family = "Inter, sans-serif"

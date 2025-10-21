@@ -14,7 +14,7 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from services_afw.search_executor_afw import (
+from app.backend.services_afw.web_search_executor import (
     WebSearchHelper,
     WebSearchExecutor,
     search_web

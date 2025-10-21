@@ -23,6 +23,7 @@ from azure.search.documents.models import (
 )
 from openai import AzureOpenAI
 from i18n.locale_msg import LOCALE_MESSAGES
+from utils.yield_message import send_step_with_code, send_step_with_input, send_step_with_code_and_input
 
 logger = logging.getLogger(__name__)
 
@@ -111,14 +112,14 @@ class AISearchExecutor(Executor):
         ctx: WorkflowContext[Dict[str, Any], str]  # Added str for yield_output
     ) -> None:
         """
-        Search documents in Azure AI Search.
+        Search documents in Azure AI Search for each sub-topic.
         
         Args:
             search_data: Dictionary with search parameters:
-                - query: Search query string
+                - sub_topics: List of sub-topics with queries
                 - search_type: "hybrid", "semantic", "vector", or "text"
                 - filters: Optional OData filter expression
-                - top_k: Number of results (default: 5)
+                - top_k: Number of results per query (default: 5)
                 - include_content: Include full content (default: True)
                 - document_type: Filter by document type
                 - industry: Filter by industry
@@ -133,7 +134,7 @@ class AISearchExecutor(Executor):
             verbose = metadata.get("verbose", False)
             LOCALE_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
             
-            query = search_data.get("query", "")
+            sub_topics = search_data.get("sub_topics", [])
             search_type = search_data.get("search_type", "hybrid")
             filters = search_data.get("filters")
             top_k = search_data.get("top_k", 5)
@@ -146,51 +147,71 @@ class AISearchExecutor(Executor):
             # ✅ Yield starting message
             await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_ai_search']}\n\n")
             
-            logger.info(f"[AISearchExecutor] Searching for: {query} (type: {search_type})")
+            if not sub_topics:
+                sub_topics = [{
+                    "sub_topic": "research report",
+                    "queries": [search_data.get("enriched_query")]
+                }]
             
-            # Generate query vector
-            query_vector = self._generate_embedding(query)
+            logger.info(f"[AISearchExecutor] Searching AI Search for {len(sub_topics)} sub-topics (type: {search_type})")
             
-            # Build filter expression
-            filter_expression = self._build_filters(
-                filters, document_type, industry, company, report_year
-            )
+            # Search by sub-topic
+            sub_topic_results = {}
             
-            # Execute search
-            search_results = self._execute_search(
-                query=query,
-                query_vector=query_vector,
-                search_type=search_type,
-                filter_expression=filter_expression,
-                top_k=top_k,
-                include_content=include_content
-            )
+            for sub_topic_data in sub_topics:
+                sub_topic_name = sub_topic_data.get("sub_topic", "research")
+                queries = sub_topic_data.get("queries", [])
+                
+                sub_topic_documents = []
+                
+                for query in queries:
+                    logger.info(f"[AISearchExecutor] Searching for '{query}' in sub-topic '{sub_topic_name}'")
+                    
+                    # Generate query vector
+                    query_vector = self._generate_embedding(query)
+                    
+                    # Build filter expression
+                    filter_expression = self._build_filters(
+                        filters, document_type, industry, company, report_year
+                    )
+                    
+                    # Execute search
+                    search_results = self._execute_search(
+                        query=query,
+                        query_vector=query_vector,
+                        search_type=search_type,
+                        filter_expression=filter_expression,
+                        top_k=top_k,
+                        include_content=include_content
+                    )
+                    
+                    # Process results
+                    documents = self._process_search_results(search_results, include_content)
+                    sub_topic_documents.extend(documents)
+                
+                if sub_topic_documents:
+                    # Store results keyed by sub_topic name
+                    sub_topic_results[sub_topic_name] = {
+                        "search_type": search_type,
+                        "documents": sub_topic_documents,
+                        "total_results": len(sub_topic_documents)
+                    }
             
-            # Process results
-            documents = self._process_search_results(search_results, include_content)
+            logger.info(f"[AISearchExecutor] Completed AI Search for {len(sub_topic_results)} sub-topics")
             
-            result_data = {
-                "query": query,
-                "search_type": search_type,
-                "documents": documents,
-                "total_results": len(documents)
-            }
-            
-            logger.info(f"[AISearchExecutor] Found {len(documents)} documents")
             
             # ✅ Yield completion message (SK compatible format with results)
-            if verbose and documents:
-                results_str = json.dumps(result_data, ensure_ascii=False, indent=2)
-                truncated = results_str[:200] + "... [truncated for display]" if len(results_str) > 200 else results_str
-                encoded_code = base64.b64encode(f"```json\n{truncated}\n```".encode('utf-8')).decode('utf-8')
-                await ctx.yield_output(f"data: {LOCALE_MSG['ai_search_context_done']}#code#{encoded_code}\n\n")
+            if verbose and sub_topic_results:
+                results_str = json.dumps(sub_topic_results, ensure_ascii=False, indent=2)
+                truncated = results_str[:1000] + "... [truncated for display]" if len(results_str) > 200 else results_str
+                await ctx.yield_output(f"data: {send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated)}\n\n")
             else:
                 await ctx.yield_output(f"data: ### {LOCALE_MSG['ai_search_context_done']}\n\n")
             
-            # Send results to next executor
+            # Send results to next executor (using SK-compatible key name)
             await ctx.send_message({
                 **search_data,
-                "ai_search_results": result_data
+                "sub_topic_ai_search_contexts": sub_topic_results
             })
             
         except Exception as e:
@@ -198,11 +219,8 @@ class AISearchExecutor(Executor):
             logger.error(f"[AISearchExecutor] {error_msg}")
             await ctx.send_message({
                 **search_data,
-                "ai_search_results": {
-                    "error": error_msg,
-                    "query": search_data.get("query", ""),
-                    "documents": []
-                }
+                "sub_topic_ai_search_contexts": {},
+                "ai_search_error": error_msg
             })
     
     def _generate_embedding(self, text: str) -> List[float]:
@@ -275,7 +293,7 @@ class AISearchExecutor(Executor):
                 select=select_fields,
                 top=top_k,
                 query_type=QueryType.SEMANTIC,
-                semantic_configuration_name="default"
+                semantic_configuration_name="semantic-config"
             )
             
         elif search_type == "semantic":
@@ -286,7 +304,7 @@ class AISearchExecutor(Executor):
                 select=select_fields,
                 top=top_k,
                 query_type=QueryType.SEMANTIC,
-                semantic_configuration_name="default",
+                semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
                 query_answer=QueryAnswerType.EXTRACTIVE
             )
@@ -356,51 +374,3 @@ class AISearchExecutor(Executor):
         
         return documents
 
-
-# AI Function for document search (can be used as a tool by ChatAgents)
-@ai_function(description="Search documents in Azure AI Search")
-def search_documents(
-    query: Annotated[str, "The search query"],
-    search_type: Annotated[str, "Search type: hybrid, semantic, vector, or text"] = "hybrid",
-    top_k: Annotated[int, "Number of results to return"] = 5,
-) -> str:
-    """
-    Search documents in Azure AI Search.
-    
-    Args:
-        query: The search query
-        search_type: Type of search to perform
-        top_k: Number of results to return
-        
-    Returns:
-        JSON string containing search results
-    """
-    executor = AISearchExecutor(id="ai_search")
-    
-    # Create a simple context that collects results
-    class SimpleContext:
-        def __init__(self):
-            self.results = None
-        
-        async def emit(self, data):
-            self.results = data
-    
-    context = SimpleContext()
-    
-    # Run the search
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    search_data = {
-        "query": query,
-        "search_type": search_type,
-        "top_k": top_k
-    }
-    
-    loop.run_until_complete(executor.search_documents(search_data, context))
-    
-    return json.dumps(context.results, ensure_ascii=False, indent=2)

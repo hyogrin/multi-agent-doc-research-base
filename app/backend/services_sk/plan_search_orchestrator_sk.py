@@ -26,7 +26,7 @@ from .grounding_plugin import GroundingPlugin
 from .ai_search_plugin import AISearchPlugin
 from .unified_file_upload_plugin import UnifiedFileUploadPlugin
 from .group_chatting_plugin import GroupChattingPlugin
-from .multi_agent_plugin import MultiAgentPlugin
+from .vanilla_multi_agent_plugin import MultiAgentPlugin
 
 
 logger = logging.getLogger(__name__)
@@ -609,18 +609,18 @@ class PlanSearchOrchestratorSK:
                             sub_topic_context += f"=== YouTube Search Results ===\n{sub_topic_youtube_contexts[sub_topic_name]}\n\n"
                         
                         # AI search context for this sub-topic only
-                        if 'sub_topic_ai_contexts' in locals() and sub_topic_name in sub_topic_ai_search_contexts:
+                        if 'sub_topic_ai_search_contexts' in locals() and sub_topic_name in sub_topic_ai_search_contexts:
                             sub_topic_context += f"=== Document Context ===\n{sub_topic_ai_search_contexts[sub_topic_name]}\n\n"
                         
                         # If no specific context, use fallback
                         if not sub_topic_context.strip():
                             sub_topic_context = "No specific context available for this sub-topic."
                         
-                        
+                       
                         sub_topic_group_chat_result_str = None
                         yield f"data: ### {LOCALE_MSG['organize_research']} for {sub_topic_name} \n"
 
-                        if multi_agent_type == "sk":
+                        if multi_agent_type == "sk_group_chat":
                             
                             # Execute group chat with ONLY this sub-topic's context
                             group_chat_function = self.kernel.get_function("sk_group_chat", "group_chat")

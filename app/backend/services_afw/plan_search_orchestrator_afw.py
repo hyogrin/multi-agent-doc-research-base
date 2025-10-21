@@ -42,10 +42,10 @@ from typing import Annotated
 from services_afw.ai_search_executor import AISearchExecutor
 from services_afw.grounding_executor import GroundingExecutor
 from services_afw.youtube_executor import YouTubeMCPExecutor
-from services_afw.group_chatting_executor import GroupChattingExecutor, GroupChattingExecutorAF
+from services_afw.group_chatting_executor import GroupChattingExecutor
 
 
-from services_afw.search_executor_afw import WebSearchExecutor
+from services_afw.web_search_executor import WebSearchExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +426,7 @@ class ResponseGeneratorExecutor(Executor):
             original_query = context_data.get("original_query", "")
             enriched_query = context_data.get("enriched_query", original_query)
             user_intent = context_data.get("user_intent", "general_query")
+            
             all_contexts = context_data.get("all_contexts", [])
             current_date = datetime.now().strftime("%Y-%m-%d")
             
@@ -623,48 +624,49 @@ class PlanSearchOrchestratorAFW:
             if research:
                 multi_agent_executor = None
                 if multi_agent_type == "afw_magentic":
-                    # multi_agent_executor = MultiAgentResearchExecutor(
-                    #     id="multi_agent_research",
-                    #     chat_client=self.chat_client,
-                    #     settings=self.settings,
-                    #     context_max_chars=20000,
-                    #     writer_parallel_limit=4
-                    # )
-                    #TODO 
-                    multi_agent_executor = GroupChattingExecutorAF(
+                    multi_agent_executor = GroupChattingExecutor(
                         id="group_chatting_research",
                         chat_client=self.chat_client,
                         settings=self.settings,
-                        context_max_chars=20000,
+                        context_max_chars=400000,  # ✅ SK와 동일한 MAX_CONTEXT_LENGTH
+                        max_document_length=10000,  # ✅ 문서당 최대 길이
                         writer_parallel_limit=4
                     )
                 elif multi_agent_type == "afw_group_chat":
-                    # ✅ Use the new AF Executor version with streaming support
-                    multi_agent_executor = GroupChattingExecutorAF(
+                    multi_agent_executor = GroupChattingExecutor(
                         id="group_chatting_research",
                         chat_client=self.chat_client,
                         settings=self.settings,
-                        context_max_chars=20000,
+                        context_max_chars=400000,
+                        max_document_length=10000,
                         writer_parallel_limit=4
                     )
                 else:
-                    multi_agent_executor = GroupChattingExecutorAF(
+                    multi_agent_executor = GroupChattingExecutor(
                         id="group_chatting_research",
                         chat_client=self.chat_client,
                         settings=self.settings,
-                        context_max_chars=20000,
+                        context_max_chars=400000,
+                        max_document_length=10000,
                         writer_parallel_limit=4
                     )
-                workflow_builder.add_edge(last_executor, multi_agent_executor)
-                last_executor = multi_agent_executor
-            
-            # Final response generation
-            response_generator = ResponseGeneratorExecutor(
-                id="response_generator",
-                chat_client=self.chat_client,
-                settings=self.settings
-            )
-            workflow_builder.add_edge(last_executor, response_generator)
+                
+                if multi_agent_executor:
+                    workflow_builder.add_edge(last_executor, multi_agent_executor)
+                    last_executor = multi_agent_executor
+                    
+                    # ✅ For research intent, GroupChatting is the FINAL executor
+                    # Don't add ResponseGeneratorExecutor - output directly from group chat
+                    logger.info("🔬 Research mode: GroupChattingExecutor will be the final node")
+            else:
+                # ✅ For general queries, add ResponseGeneratorExecutor as final node
+                response_generator = ResponseGeneratorExecutor(
+                    id="response_generator",
+                    chat_client=self.chat_client,
+                    settings=self.settings
+                )
+                workflow_builder.add_edge(last_executor, response_generator)
+                logger.info("💬 General query mode: ResponseGeneratorExecutor is the final node")
             
             # Build the workflow
             workflow = workflow_builder.build()
@@ -694,45 +696,49 @@ class PlanSearchOrchestratorAFW:
                 
                 # Stream workflow events
                 async for event in workflow.run_stream(workflow_input):
-                    # Check if event data contains progress message from ProgressReporter
                     event_data = None
                     if hasattr(event, 'data'):
                         event_data = event.data
                     
+                    # Handle progress messages
                     if event_data and isinstance(event_data, dict):
                         progress_msg = event_data.get("_progress_message")
                         if progress_msg:
                             yield f"data: {progress_msg}\n\n"
                             logger.info(f"📢 Progress: {progress_msg[:80]}...")
-                            # Remove it so it doesn't propagate further
                             event_data.pop("_progress_message", None)
                     
                     # Handle different event types
                     if isinstance(event, WorkflowOutputEvent):
-                        # This could be progress messages OR final answer
                         logger.info(f"🎯 WorkflowOutputEvent received")
                         output_text = event.output if hasattr(event, 'output') else event_data
                         
                         if output_text:
-                            # Check if this is a progress message (starts with "data: ###")
-                            is_progress_message = isinstance(output_text, str) and output_text.strip().startswith("data: ###")
-                            
-                            if is_progress_message:
-                                # This is a progress message from ctx.yield_output()
-                                yield f"{output_text}"
-                                logger.info(f"📢 Progress from yield_output: {output_text[:80]}...")
-                            else:
-                                # This is the actual final answer - measure TTFT here
+                            # ✅ Check for TTFT marker
+                            if isinstance(output_text, str) and "__TTFT_MARKER__" in output_text:
                                 if not first_answer_token_yielded:
                                     ttft_time = datetime.now(tz=self.timezone) - start_time
                                     first_answer_token_yielded = True
-                                    logger.info(f"⏱️ TTFT (Time To First Token): {ttft_time.total_seconds():.2f}s")
+                                    logger.info(f"⏱️ TTFT (from GroupChattingExecutor): {ttft_time.total_seconds():.2f}s")
+                                # Don't yield the marker to frontend
+                                continue
+                            
+                            # Check if this is a progress message
+                            is_progress_message = isinstance(output_text, str) and output_text.strip().startswith("data: ###")
+                            
+                            if is_progress_message:
+                                yield f"{output_text}"
+                                logger.info(f"📢 Progress: {output_text[:80]}...")
+                            else:
+                                # ✅ Final answer (from ResponseGenerator OR GroupChattingExecutor)
+                                if not first_answer_token_yielded:
+                                    ttft_time = datetime.now(tz=self.timezone) - start_time
+                                    first_answer_token_yielded = True
+                                    logger.info(f"⏱️ TTFT: {ttft_time.total_seconds():.2f}s")
                                 
-                                # Stream the final response
-                                yield f"{output_text}\n\n"
+                                yield f"{output_text}"
                     
                     elif isinstance(event, AgentRunUpdateEvent):
-                        # Agent response streaming (if any) - but NOT the final answer
                         logger.info(f"📝 AgentRunUpdateEvent received")
                         if event_data:
                             yield f"data: {event_data}\n\n"
@@ -744,11 +750,13 @@ class PlanSearchOrchestratorAFW:
                     
                     if ttft_time is not None:
                         logger.info(f"✅ Response completed - TTFT: {ttft_time.total_seconds():.2f}s, Total: {total_elapsed.total_seconds():.2f}s")
+                        yield "\n"
+                        yield f"doc research response generated successfully in {ttft_time.total_seconds():.2f} seconds \n"  
                         yield f"\ndata: ### ⏱️ TTFT: {ttft_time.total_seconds():.2f}s | Total: {total_elapsed.total_seconds():.2f}s\n\n"
                     else:
                         logger.warning(f"⚠️ No final answer token detected - Total elapsed: {total_elapsed.total_seconds():.2f}s")
                         yield f"\ndata: ### {elapsed_msg}: {total_elapsed.total_seconds():.2f}s\n\n"
-            
+
             else:
                 # Non-streaming execution
                 events = await workflow.run(workflow_input)
