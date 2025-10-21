@@ -620,7 +620,7 @@ class PlanSearchOrchestratorSK:
                         sub_topic_group_chat_result_str = None
                         yield f"data: ### {LOCALE_MSG['organize_research']} for {sub_topic_name} \n"
 
-                        if multi_agent_type == "sk_group_chat":
+                        if multi_agent_type == "Semantic Kernel GroupChat":
                             
                             # Execute group chat with ONLY this sub-topic's context
                             group_chat_function = self.kernel.get_function("sk_group_chat", "group_chat")

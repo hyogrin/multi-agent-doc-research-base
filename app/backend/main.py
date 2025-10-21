@@ -27,6 +27,7 @@ log_filename = f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    #TODO: use this for debugging
     handlers=[
         # logging.FileHandler(log_filename, encoding='utf-8'),
         logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
@@ -386,7 +387,9 @@ async def plan_search_endpoint(
                     include_ytb_search=request.include_ytb_search,
                     include_mcp_server=request.include_mcp_server,
                     include_ai_search=request.include_ai_search,
+                    multi_agent_type=request.multi_agent_type,
                     verbose=request.verbose,
+                    
                 ),
                 media_type="text/event-stream"
             )
@@ -404,6 +407,7 @@ async def plan_search_endpoint(
             include_ytb_search=request.include_ytb_search,
             include_mcp_server=request.include_mcp_server,
             include_ai_search=request.include_ai_search,
+            multi_agent_type=request.multi_agent_type,
             verbose=request.verbose,
         )
         

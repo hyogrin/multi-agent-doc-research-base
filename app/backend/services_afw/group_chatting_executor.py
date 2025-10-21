@@ -300,7 +300,7 @@ class GroupChattingExecutor(Executor):
         max_rounds = 3  # Fixed for now
         
         # Context size guard
-        MAX_CONTEXT_CHARS = 15000
+        MAX_CONTEXT_CHARS = 10000
         trimmed_context = sub_topic_contexts
         if len(trimmed_context) > MAX_CONTEXT_CHARS:
             trimmed_context = trimmed_context[:MAX_CONTEXT_CHARS] + "\n...[truncated]"
@@ -378,9 +378,30 @@ class GroupChattingExecutor(Executor):
                         await ctx.yield_output(f"data: ### 🔍 Reviewer phase for '{sub_topic}'\n\n")
                     await ctx.yield_output(f"data: ### 🔍 Reviewer round {reviewer_count}: {sub_topic}\n\n")
                 
-                # Get response
+                # Get response with keepalive during long operations
                 last_message_text = messages[-1].text if messages else task
-                response = await current_agent.run(last_message_text)
+                
+                # ⭐ Send keepalive every 10 seconds while waiting for response
+                import asyncio
+                
+                async def keepalive_sender():
+                    """Send periodic keepalive messages during long operations."""
+                    while True:
+                        await asyncio.sleep(10)  # Every 10 seconds
+                        await ctx.yield_output(f"data: : \n\n")  # SSE comment keepalive
+                
+                # Start keepalive task
+                keepalive_task = asyncio.create_task(keepalive_sender())
+                
+                try:
+                    response = await current_agent.run(last_message_text)
+                finally:
+                    # Stop keepalive
+                    keepalive_task.cancel()
+                    try:
+                        await keepalive_task
+                    except asyncio.CancelledError:
+                        pass
 
                 # ✅ Send TTFT event on first response
                 if not first_token_sent:

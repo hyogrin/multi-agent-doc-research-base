@@ -203,7 +203,7 @@ class AISearchExecutor(Executor):
             # ✅ Yield completion message (SK compatible format with results)
             if verbose and sub_topic_results:
                 results_str = json.dumps(sub_topic_results, ensure_ascii=False, indent=2)
-                truncated = results_str[:1000] + "... [truncated for display]" if len(results_str) > 200 else results_str
+                truncated = results_str[:200] + "... [truncated for display]" if len(results_str) > 200 else results_str
                 await ctx.yield_output(f"data: {send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated)}\n\n")
             else:
                 await ctx.yield_output(f"data: ### {LOCALE_MSG['ai_search_context_done']}\n\n")

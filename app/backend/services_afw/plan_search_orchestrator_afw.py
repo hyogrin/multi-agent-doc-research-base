@@ -43,7 +43,7 @@ from services_afw.ai_search_executor import AISearchExecutor
 from services_afw.grounding_executor import GroundingExecutor
 from services_afw.youtube_executor import YouTubeMCPExecutor
 from services_afw.group_chatting_executor import GroupChattingExecutor
-
+from services_afw.magentic_executor import MagenticExecutor
 
 from services_afw.web_search_executor import WebSearchExecutor
 
@@ -623,16 +623,19 @@ class PlanSearchOrchestratorAFW:
             # Add multi-agent research for deep research tasks
             if research:
                 multi_agent_executor = None
-                if multi_agent_type == "afw_magentic":
-                    multi_agent_executor = GroupChattingExecutor(
-                        id="group_chatting_research",
+                if multi_agent_type == "MS Agent Framework Magentic":
+                    
+                    # Use Magentic orchestration pattern
+                    multi_agent_executor = MagenticExecutor(
+                        id="magentic_research",
                         chat_client=self.chat_client,
                         settings=self.settings,
                         context_max_chars=400000,  # ✅ SK와 동일한 MAX_CONTEXT_LENGTH
                         max_document_length=10000,  # ✅ 문서당 최대 길이
                         writer_parallel_limit=4
                     )
-                elif multi_agent_type == "afw_group_chat":
+                    logger.info("🎯 Using Magentic orchestration pattern for research")
+                elif multi_agent_type == "MS Agent Framework GroupChat":
                     multi_agent_executor = GroupChattingExecutor(
                         id="group_chatting_research",
                         chat_client=self.chat_client,
@@ -641,7 +644,9 @@ class PlanSearchOrchestratorAFW:
                         max_document_length=10000,
                         writer_parallel_limit=4
                     )
+                    logger.info("💬 Using Group Chat pattern for research")
                 else:
+                    # Default to GroupChatting
                     multi_agent_executor = GroupChattingExecutor(
                         id="group_chatting_research",
                         chat_client=self.chat_client,
@@ -650,14 +655,18 @@ class PlanSearchOrchestratorAFW:
                         max_document_length=10000,
                         writer_parallel_limit=4
                     )
+                    logger.info("💬 Using default Group Chat pattern for research")
                 
                 if multi_agent_executor:
                     workflow_builder.add_edge(last_executor, multi_agent_executor)
                     last_executor = multi_agent_executor
                     
-                    # ✅ For research intent, GroupChatting is the FINAL executor
-                    # Don't add ResponseGeneratorExecutor - output directly from group chat
-                    logger.info("🔬 Research mode: GroupChattingExecutor will be the final node")
+                    # ✅ For research intent, multi-agent executor is the FINAL executor
+                    # Don't add ResponseGeneratorExecutor - output directly from research executor
+                    if multi_agent_type == "MS Agent Framework Magentic":
+                        logger.info("🔬 Research mode: MagenticExecutor will be the final node")
+                    else:
+                        logger.info("🔬 Research mode: GroupChattingExecutor will be the final node")
             else:
                 # ✅ For general queries, add ResponseGeneratorExecutor as final node
                 response_generator = ResponseGeneratorExecutor(
@@ -752,10 +761,11 @@ class PlanSearchOrchestratorAFW:
                         logger.info(f"✅ Response completed - TTFT: {ttft_time.total_seconds():.2f}s, Total: {total_elapsed.total_seconds():.2f}s")
                         yield "\n"
                         yield f"doc research response generated successfully in {ttft_time.total_seconds():.2f} seconds \n"  
-                        yield f"\ndata: ### ⏱️ TTFT: {ttft_time.total_seconds():.2f}s | Total: {total_elapsed.total_seconds():.2f}s\n\n"
+                        yield f"\n"
+                        yield f"data: ### ⏱️ TTFT: {ttft_time.total_seconds():.2f}s | Total: {total_elapsed.total_seconds():.2f}s\n\n"
                     else:
                         logger.warning(f"⚠️ No final answer token detected - Total elapsed: {total_elapsed.total_seconds():.2f}s")
-                        yield f"\ndata: ### {elapsed_msg}: {total_elapsed.total_seconds():.2f}s\n\n"
+                        yield f"data: ### {elapsed_msg}: {total_elapsed.total_seconds():.2f}s\n\n"
 
             else:
                 # Non-streaming execution

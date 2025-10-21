@@ -270,6 +270,7 @@ async def send_starters_as_actions(language: str):
 
 async def check_upload_status_once(upload_id: str) -> dict | None:
     """단발성 업로드 상태 조회 (폴링 루프 내부/액션 버튼에서 호출)"""
+    session = None
     try:
         session = requests.Session()
         resp = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=(10, 30))
@@ -279,6 +280,13 @@ async def check_upload_status_once(upload_id: str) -> dict | None:
     except Exception as e:
         logger.warning(f"[upload:{upload_id}] 상태 조회 실패: {e}")
         return None
+    finally:
+        # ✅ 반드시 session 정리
+        if session:
+            try:
+                session.close()
+            except Exception as e:
+                logger.error(f"❌ Error closing status check session: {e}")
 
 async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: float = 3.0):
     """주기적으로 상태를 폴링해서 동일 메시지를 갱신"""
@@ -502,6 +510,14 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
         await cl.Message(content=f"❌ **upload error**: {str(e)}").send()
         logger.error(f"Upload error: {e}")
         return False
+    finally:
+        # ✅ Session 정리 추가
+        if session:
+            try:
+                session.close()
+                logger.info("🔌 Upload session closed successfully")
+            except Exception as e:
+                logger.error(f"❌ Error closing upload session: {e}")
 
 @cl.set_chat_profiles
 async def chat_profile():
@@ -661,9 +677,15 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     msg = cl.Message(content="")
     await msg.send()
     
+    # ⭐ Keepalive 제어를 위한 이벤트
+    keepalive_stop = asyncio.Event()
+    keepalive_task = None
+    session = None  # session 변수 초기화
+    httpx_client = None  # ✅ 추가
+    
     try:
         # Set up session with retry capability
-        session = create_requests_session()
+        session = create_requests_session()  # ✅ session 변수에 할당
         
         api_url = SK_API_URL
         
@@ -687,10 +709,14 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
             response = session.post(
                 api_url,
                 json=payload,
-                timeout=(30, 240),
+                timeout=(60, 600),
                 stream=True,
                 headers={"Accept": "text/event-stream"}
             )
+
+            # ✅ Response raw socket timeout 설정
+            if response.raw:
+                response.raw._fp.fp.raw._sock.settimeout(900)  # 15분
             
             step.output = f"Response status: {response.status_code}"
             
@@ -707,9 +733,22 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                         accumulated_content = ""
                         current_tool_step = None
                         tool_steps = {}
+                        last_activity = asyncio.get_event_loop().time()
+                        last_keepalive_log = asyncio.get_event_loop().time()  # ✅ 추가
                         
                         logger.info("Starting SSE processing loop...")
                         for line in response.iter_lines():
+                            # ✅ 주기적으로 연결 상태 로깅
+                            current_time = asyncio.get_event_loop().time()
+                            if current_time - last_keepalive_log > 20:  # 20초마다
+                                logger.info(f"💓 SSE connection alive (waiting for data...)")
+                                last_keepalive_log = current_time
+                            
+                            # ✅ 활동 시간 업데이트 (3분 → 5분으로 증가)
+                            if current_time - last_activity > 300:  # 5분 동안 데이터 없으면
+                                logger.warning("⚠️ No SSE data for 5 minutes, possible stall")
+                                break
+
                             if not line:
                                 continue
                             
@@ -903,9 +942,33 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
         logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
     
     finally:
+        # ⭐ Keepalive 태스크 정리
+        keepalive_stop.set()  # ✅ 먼저 정지 신호 보냄
+        
+        if keepalive_task:
+            try:
+                await asyncio.wait_for(keepalive_task, timeout=3.0)
+                logger.info("💓 Keepalive task stopped gracefully")
+            except asyncio.TimeoutError:
+                keepalive_task.cancel()
+                logger.warning("⚠️ Keepalive task cancelled due to timeout")
+                try:
+                    await keepalive_task
+                except asyncio.CancelledError:
+                    pass
+            except Exception as e:
+                logger.error(f"❌ Error stopping keepalive: {e}")
+        
+        # ✅ Session 정리 추가 (중요!)
+        if session:
+            try:
+                session.close()
+                logger.info("🔌 HTTP session closed successfully")
+            except Exception as e:
+                logger.error(f"❌ Error closing session: {e}")
+        
         # Clean up step tracking variables
         try:
-            # Small delay to ensure all async operations complete
             await asyncio.sleep(0.3)
             logger.info("Step cleanup completed successfully")
         except Exception as cleanup_error:
