@@ -16,6 +16,7 @@ from pathlib import Path
 from io import BytesIO
 from enum import Enum
 import os
+import httpx
 os.environ["CHAINLIT_CORS_ALLOW_ORIGIN"] = "*"  # 개발 환경용, 프로덕션에서는 특정 도메인 지정
 
 # Import classes and utilities from app_utils
@@ -649,7 +650,7 @@ async def setup_agent(settings_dict: Dict[str, Any]):
     await cl.Message(content="⚙️ Settings updated successfully!").send()
 
 async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
-    """Stream-enabled chat function that yields partial updates using Chainlit's Step API"""
+    """Stream-enabled chat function with httpx for better async support"""
     if not message or message.strip() == "":
         return
     
@@ -659,16 +660,16 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     # Helper function to clean text content
     def clean_response_text(text: str) -> str:
         """Clean response text to prevent unwanted markdown formatting"""
-        # Replace ~~ with == to avoid strikethrough
         cleaned_text = text.replace("~~", "==")
         return cleaned_text
     
-    # Prepare the API payload using utility function
+    # Prepare the API payload
     payload = create_api_payload(settings)
     
     # Debug logging
     logger.info(f"API Payload: research={settings.research}, web_search={settings.web_search}, planning={settings.planning},"
-          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, multi_agent_type={settings.multi_agent_type}, search_engine={settings.search_engine}, "
+          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, "
+          f"multi_agent_type={settings.multi_agent_type}, search_engine={settings.search_engine}, "
           f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
           f"language={settings.language}, verbose={settings.verbose}")
     
@@ -677,19 +678,29 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     msg = cl.Message(content="")
     await msg.send()
     
-    # ⭐ Keepalive 제어를 위한 이벤트
-    keepalive_stop = asyncio.Event()
-    keepalive_task = None
-    session = None  # session 변수 초기화
-    httpx_client = None  # ✅ 추가
+    # ✅ httpx client 초기화
+    httpx_client = None
     
     try:
-        # Set up session with retry capability
-        session = create_requests_session()  # ✅ session 변수에 할당
+        # ✅ httpx AsyncClient with custom timeouts
+        httpx_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=90.0,      # 연결 타임아웃: 90초
+                read=1200.0,        # 읽기 타임아웃: 20분 (긴 응답 대응)
+                write=60.0,        # 쓰기 타임아웃: 60초
+                pool=None          # 풀 타임아웃: 무제한
+            ),
+            limits=httpx.Limits(
+                max_keepalive_connections=5,
+                max_connections=10,
+                keepalive_expiry=600.0  # keepalive 연결 유지 시간: 10분
+            ),
+            follow_redirects=True
+        )
         
         api_url = SK_API_URL
         
-        # Create step for API call with detailed information
+        # Create step for API call
         async with cl.Step(name="API Request", type="run") as step:
             step.input = {
                 "endpoint": api_url,
@@ -705,276 +716,263 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                 "locale": settings.language,
             }
             
-            # Make request with stream=True
-            response = session.post(
+            logger.info(f"🚀 Starting httpx stream request to {api_url}")
+            
+            # ✅ httpx stream context manager
+            async with httpx_client.stream(
+                "POST",
                 api_url,
                 json=payload,
-                timeout=(60, 600),
-                stream=True,
-                headers={"Accept": "text/event-stream"}
-            )
-
-            # ✅ Response raw socket timeout 설정
-            if response.raw:
-                response.raw._fp.fp.raw._sock.settimeout(900)  # 15분
-            
-            step.output = f"Response status: {response.status_code}"
-            
-            logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-            
-            if response.status_code == 200:
-                content_type = response.headers.get('Content-Type', '')
+                headers={"Accept": "text/event-stream"},
+            ) as response:
                 
-                if 'text/event-stream' in content_type:
-                    # Process Server-Sent Events (SSE) with tool calling steps
-                    async with cl.Step(name="Processing Response", type="tool") as process_step:
-                        process_step.input = "Processing streaming response..."
-                        
-                        accumulated_content = ""
-                        current_tool_step = None
-                        tool_steps = {}
-                        last_activity = asyncio.get_event_loop().time()
-                        last_keepalive_log = asyncio.get_event_loop().time()  # ✅ 추가
-                        
-                        logger.info("Starting SSE processing loop...")
-                        for line in response.iter_lines():
-                            # ✅ 주기적으로 연결 상태 로깅
-                            current_time = asyncio.get_event_loop().time()
-                            if current_time - last_keepalive_log > 20:  # 20초마다
-                                logger.info(f"💓 SSE connection alive (waiting for data...)")
-                                last_keepalive_log = current_time
+                step.output = f"Response status: {response.status_code}"
+                logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'unknown')}")
+                
+                if response.status_code == 200:
+                    content_type = response.headers.get('content-type', '')
+                    
+                    if 'text/event-stream' in content_type:
+                        # Process Server-Sent Events (SSE) with tool calling steps
+                        async with cl.Step(name="Processing Response", type="tool") as process_step:
+                            process_step.input = "Processing streaming response..."
                             
-                            # ✅ 활동 시간 업데이트 (3분 → 5분으로 증가)
-                            if current_time - last_activity > 300:  # 5분 동안 데이터 없으면
-                                logger.warning("⚠️ No SSE data for 5 minutes, possible stall")
-                                break
-
-                            if not line:
-                                continue
+                            accumulated_content = ""
+                            current_tool_step = None
+                            tool_steps = {}
+                            last_activity = asyncio.get_event_loop().time()
+                            last_keepalive_log = asyncio.get_event_loop().time()
                             
-                            # Decode the line
-                            line = line.decode('utf-8')
-                            logger.info(f"SSE line received: {line}")
+                            logger.info("Starting SSE processing loop with httpx...")
                             
-                            # Skip SSE comments and empty lines
-                            if line.startswith(':') or not line.strip():
-                                continue
-                            
-                            # Handle SSE format (data: prefix)
-                            if line.startswith('data: '):
-                                line = line[6:].strip()  # Remove the 'data: ' prefix
+                            # ✅ httpx의 async iteration (자동 디코딩, 더 안정적)
+                            async for line in response.aiter_lines():
+                                # 주기적 로깅
+                                current_time = asyncio.get_event_loop().time()
+                                if current_time - last_keepalive_log > 20:
+                                    logger.info(f"💓 SSE connection alive (httpx stream active)")
+                                    last_keepalive_log = current_time
                                 
-                                # Status message handling - create tool steps for different operations
-                                if line.startswith('### '):
-                                    step_content = line[4:]
+                                # Stall 감지 (5분)
+                                if current_time - last_activity > 300:
+                                    logger.warning("⚠️ No SSE data for 5 minutes, possible stall")
+                                    break
+                                
+                                if not line:
+                                    continue
+                                
+                                last_activity = current_time
+                                
+                                # ✅ line은 이미 디코딩되어 있음 (httpx가 자동 처리)
+                                logger.debug(f"SSE line received: {line[:100]}...")
+                                
+                                # Skip SSE comments and empty lines
+                                if line.startswith(':') or not line.strip():
+                                    continue
+                                
+                                # Handle SSE format (data: prefix)
+                                if line.startswith('data: '):
+                                    line = line[6:].strip()
                                     
-                                    # Complete previous step if exists
-                                    if current_tool_step:
-                                        current_tool_step.output = "✅ Completed"
-                                        await safe_send_step(current_tool_step)
+                                    # Status message handling - create tool steps
+                                    if line.startswith('### '):
+                                        step_content = line[4:]
+                                        
+                                        # Complete previous step
+                                        if current_tool_step:
+                                            current_tool_step.output = "✅ Completed"
+                                            await safe_send_step(current_tool_step)
+                                        
+                                        # Decode step content
+                                        step_name, code_content, description = decode_step_content(
+                                            step_content, step_name_manager
+                                        )
+                                        
+                                        # Create new step
+                                        step_type = "tool"
+                                        step_icon = "🔧"
+                                        
+                                        original_name_lower = step_content.lower()
+                                        logger.info(f"Creating tool step: {step_name}")
+                                        
+                                        try:
+                                            if original_name_lower.startswith(ui_text.get("analyzing", "").lower()):
+                                                step_type = "intent"
+                                                step_icon = "🧠"
+                                            elif original_name_lower.startswith(ui_text.get("analyze_complete", "").lower()):
+                                                step_type = "intent"
+                                                step_icon = "🧠"
+                                            elif original_name_lower.startswith(ui_text.get("task_planning", "").lower()):
+                                                step_type = "planning"
+                                                step_icon = "📋"
+                                            elif original_name_lower.startswith(ui_text.get("plan_done", "").lower()):
+                                                step_type = "planning"
+                                                step_icon = "📋"
+                                            elif original_name_lower.startswith(ui_text.get("searching", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🌐"
+                                            elif original_name_lower.startswith(ui_text.get("search_done", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🌐"
+                                            elif original_name_lower.startswith(ui_text.get("searching_YouTube", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🎬"
+                                            elif original_name_lower.startswith(ui_text.get("YouTube_done", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🎬"
+                                            elif original_name_lower.startswith(ui_text.get("searching_ai_search", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🏁"
+                                            elif original_name_lower.startswith(ui_text.get("ai_search_context_done", "").lower()):
+                                                step_type = "retrieval"
+                                                step_icon = "🏁"
+                                            elif original_name_lower.startswith(ui_text.get("answering", "").lower()):
+                                                step_type = "llm"
+                                                step_icon = "👨‍💻"
+                                            elif original_name_lower.startswith(ui_text.get("start_research", "").lower()):
+                                                step_type = "research"
+                                                step_icon = "✏️"
+                                            elif original_name_lower.startswith(ui_text.get("organize_research", "").lower()):
+                                                step_type = "research"
+                                                step_icon = "✏️"
+                                            elif original_name_lower.startswith(ui_text.get("write_research", "").lower()):
+                                                step_type = "research"
+                                                step_icon = "✏️"
+                                            elif original_name_lower.startswith(ui_text.get("review_research", "").lower()):
+                                                step_type = "research"
+                                                step_icon = "✏️"
+                                            elif "context information" in original_name_lower:
+                                                step_type = "tool"
+                                                step_icon = "📃"
+                                        except KeyError as e:
+                                            logger.warning(f"Missing UI text key: {e}")
+                                        
+                                        current_tool_step = cl.Step(
+                                            name=f"{step_icon} {step_name}",
+                                            type=step_type
+                                        )
+                                        
+                                        # Set input
+                                        if code_content:
+                                            current_tool_step.input = f"```python\n{code_content}\n```"
+                                        elif description:
+                                            current_tool_step.input = description
+                                        else:
+                                            current_tool_step.input = f"Executing: {step_name}"
+                                        
+                                        if not await safe_send_step(current_tool_step):
+                                            logger.warning(f"Failed to send tool step: {step_name}")
+                                            break
+                                        
+                                        tool_steps[step_name] = current_tool_step
                                     
-                                    # Decode step content (name, code, description)
-                                    step_name, code_content, description = decode_step_content(step_content, step_name_manager)
-                                    
-                                    # Create new step for each tool operation with appropriate types
-                                    step_type = "tool"
-                                    step_icon = "🔧"
-                                    
-                                    # Use original content for UI matching, not the unique step name
-                                    original_name_lower = step_content.lower()
-                                    logger.info(f"Creating tool step: {step_name}, original content: {step_content}")
-                                    try:
-                                        if original_name_lower.startswith(ui_text.get("analyzing").lower()):
-                                            step_type = "intent"
-                                            step_icon = "🧠"
-                                        elif original_name_lower.startswith(ui_text.get("analyze_complete").lower()):
-                                            step_type = "intent"
-                                            step_icon = "🧠"
-                                        elif original_name_lower.startswith(ui_text.get("task_planning").lower()):
-                                            step_type = "planning"
-                                            step_icon = "📋"
-                                        elif original_name_lower.startswith(ui_text.get("plan_done").lower()):
-                                            step_type = "planning"
-                                            step_icon = "📋"
-                                        elif original_name_lower.startswith(ui_text.get("searching").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🌐"
-                                        elif original_name_lower.startswith(ui_text.get("search_done").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🌐"                                            
-                                        elif original_name_lower.startswith(ui_text.get("searching_YouTube").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🎬"
-                                        elif original_name_lower.startswith(ui_text.get("YouTube_done").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🎬"
-                                        elif original_name_lower.startswith(ui_text.get("searching_ai_search").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🏁"
-                                        elif original_name_lower.startswith(ui_text.get("ai_search_context_done").lower()):
-                                            step_type = "retrieval"
-                                            step_icon = "🏁"
-                                        elif original_name_lower.startswith(ui_text.get("answering").lower()):
-                                            step_type = "llm"
-                                            step_icon = "👨‍💻"
-                                        elif original_name_lower.startswith(ui_text.get("start_research").lower()):
-                                            step_type = "research"
-                                            step_icon = "✏️"
-                                        elif original_name_lower.startswith(ui_text.get("organize_research").lower()):
-                                            step_type = "research"
-                                            step_icon = "✏️"
-                                        elif original_name_lower.startswith(ui_text.get("write_research").lower()):
-                                            step_type = "research"
-                                            step_icon = "✏️"
-                                        elif original_name_lower.startswith(ui_text.get("review_research").lower()):
-                                            step_type = "research"
-                                            step_icon = "✏️"
-                                        elif "context information" in original_name_lower:
-                                            step_type = "tool"
-                                            step_icon = "📃"
-                                    except KeyError as e:
-                                        logger.warning(f"Missing UI text key: {e}")
-                                    
-                                    current_tool_step = cl.Step(
-                                        name=f"{step_icon} {step_name}", 
-                                        type=step_type
-                                    )
-                                    
-                                    # Set input based on available content
-                                    if code_content:
-                                        # Display code with syntax highlighting
-                                        current_tool_step.input = f"```python\n{code_content}\n```"
-                                    elif description:
-                                        # Display description
-                                        current_tool_step.input = description
                                     else:
-                                        # Default message
-                                        current_tool_step.input = f"Executing: {step_name}"
-                                    
-                                    if not await safe_send_step(current_tool_step):
-                                        logger.warning(f"Failed to send tool step: {step_name}")
-                                        break  # Exit if connection is lost
-                                    
-                                    # Store step for later reference
-                                    tool_steps[step_name] = current_tool_step
+                                        # Regular content
+                                        cleaned_line = clean_response_text(line)
+                                        
+                                        if accumulated_content:
+                                            if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or \
+                                               accumulated_content.endswith(('.', '!', '?', ':')):
+                                                accumulated_content += "\n\n" + cleaned_line
+                                            else:
+                                                accumulated_content += "\n" + cleaned_line
+                                        else:
+                                            accumulated_content = cleaned_line
+                                        
+                                        # Stream to UI
+                                        if not await safe_stream_token(msg, cleaned_line + "\n"):
+                                            logger.warning("Stream connection lost")
+                                            break
+                                
                                 else:
-                                    # Regular content - clean and accumulate and stream
-                                    cleaned_line = clean_response_text(line)  # Clean the line before processing
+                                    # Regular content without 'data:' prefix
+                                    cleaned_line = clean_response_text(line)
                                     
                                     if accumulated_content:
-                                        # Apply formatting rules for line breaks
-                                        if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
+                                        if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or \
+                                           accumulated_content.endswith(('.', '!', '?', ':')):
                                             accumulated_content += "\n\n" + cleaned_line
                                         else:
                                             accumulated_content += "\n" + cleaned_line
                                     else:
                                         accumulated_content = cleaned_line
-
-                            else:
-                                # Regular content - clean and accumulate and stream
-                                cleaned_line = clean_response_text(line)  # Clean the line before processing
-                                
-                                if accumulated_content:
-                                    # Apply formatting rules for line breaks
-                                    if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or accumulated_content.endswith(('.', '!', '?', ':')):
-                                        accumulated_content += "\n\n" + cleaned_line
-                                    else:
-                                        accumulated_content += "\n" + cleaned_line
-                                else:
-                                    accumulated_content = cleaned_line
-                                
-                                # Stream update to UI safely with cleaned content
-                                if not await safe_stream_token(msg, cleaned_line + "\n"):
-                                    logger.warning("Stream connection lost, stopping streaming")
-                                    break  # Exit if connection is lost
-                        
-                        # Close any remaining tool step
-                        if current_tool_step:
-                            current_tool_step.output = "✅ Completed"
-                            await safe_send_step(current_tool_step)
-                        
-                        process_step.output = f"✅ Processed {len(accumulated_content)} characters across {len(tool_steps)} tool steps"
-                
-                else:
-                    # Handle regular non-streaming response (existing code remains the same)
-                    async with cl.Step(name="Processing Non-Streaming Response", type="tool") as process_step:
-                        logger.info("Not a chunked response, trying to process as regular response")
-                        try:
-                            chunks = []
-                            for chunk in response.iter_content(chunk_size=None):
-                                if chunk:
-                                    chunks.append(chunk)
+                                    
+                                    if not await safe_stream_token(msg, cleaned_line + "\n"):
+                                        logger.warning("Stream connection lost")
+                                        break
                             
-                            if chunks:
-                                response_text = b''.join(chunks).decode('utf-8', errors='replace')
-                                cleaned_response = clean_response_text(response_text) # Clean the response
+                            # Close remaining step
+                            if current_tool_step:
+                                current_tool_step.output = "✅ Completed"
+                                await safe_send_step(current_tool_step)
+                            
+                            process_step.output = f"✅ Processed {len(accumulated_content)} characters across {len(tool_steps)} tool steps"
+                    
+                    else:
+                        # Handle non-streaming response
+                        async with cl.Step(name="Processing Non-Streaming Response", type="tool") as process_step:
+                            logger.info("Not a streaming response, reading full content")
+                            try:
+                                # ✅ httpx로 전체 컨텐츠 읽기
+                                response_text = await response.aread()
+                                response_text = response_text.decode('utf-8', errors='replace')
+                                cleaned_response = clean_response_text(response_text)
                                 
-                                # Try to parse as JSON first
+                                # Try JSON parse
                                 try:
                                     response_data = json.loads(response_text)
                                     if isinstance(response_data, dict) and "content" in response_data:
                                         cleaned_content = clean_response_text(response_data["content"])
                                         await safe_stream_token(msg, cleaned_content)
-                                        process_step.output = f"✅ Parsed JSON response with content: {cleaned_content[:50]}..."
+                                        process_step.output = f"✅ Parsed JSON with content"
                                     else:
                                         await safe_stream_token(msg, cleaned_response)
-                                        process_step.output = "✅ JSON response without content field, using raw text"
+                                        process_step.output = "✅ JSON without content field"
                                 except json.JSONDecodeError:
-                                    # Not valid JSON, just use as text
                                     await safe_stream_token(msg, cleaned_response)
-                                    process_step.output = "✅ Not a valid JSON response, using raw text"
-                            else:
-                                error_msg = "No response received from server."
+                                    process_step.output = "✅ Not JSON, used raw text"
+                                
+                            except Exception as e:
+                                error_msg = f"Error processing response: {str(e)}"
                                 await safe_stream_token(msg, error_msg)
                                 process_step.output = error_msg
-                        
-                        except Exception as e:
-                            error_msg = f"Error processing response: {str(e)}"
-                            await safe_stream_token(msg, error_msg)
-                            process_step.output = error_msg
-            else:
-                error_msg = f"Error: {response.status_code} - {response.text}"
-                await safe_stream_token(msg, error_msg)
-                step.output = error_msg
+                else:
+                    # ✅ httpx로 에러 응답 읽기
+                    error_text = await response.aread()
+                    error_msg = f"Error: {response.status_code} - {error_text.decode('utf-8', errors='replace')}"
+                    await safe_stream_token(msg, error_msg)
+                    step.output = error_msg
     
+    except httpx.TimeoutException as e:
+        await handle_error_response(msg, "Request timeout", str(e))
+        logger.error(f"httpx timeout: {e}")
+    except httpx.NetworkError as e:
+        await handle_error_response(msg, "Network error", str(e))
+        logger.error(f"httpx network error: {e}")
+    except httpx.HTTPError as e:
+        await handle_error_response(msg, "HTTP error", str(e))
+        logger.error(f"httpx HTTP error: {e}")
     except Exception as e:
         await handle_error_response(msg, "Unexpected error", str(e))
         logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
     
     finally:
-        # ⭐ Keepalive 태스크 정리
-        keepalive_stop.set()  # ✅ 먼저 정지 신호 보냄
-        
-        if keepalive_task:
+        # ✅ httpx client 정리
+        if httpx_client:
             try:
-                await asyncio.wait_for(keepalive_task, timeout=3.0)
-                logger.info("💓 Keepalive task stopped gracefully")
-            except asyncio.TimeoutError:
-                keepalive_task.cancel()
-                logger.warning("⚠️ Keepalive task cancelled due to timeout")
-                try:
-                    await keepalive_task
-                except asyncio.CancelledError:
-                    pass
+                await httpx_client.aclose()
+                logger.info("🔌 httpx client closed successfully")
             except Exception as e:
-                logger.error(f"❌ Error stopping keepalive: {e}")
+                logger.error(f"❌ Error closing httpx client: {e}")
         
-        # ✅ Session 정리 추가 (중요!)
-        if session:
-            try:
-                session.close()
-                logger.info("🔌 HTTP session closed successfully")
-            except Exception as e:
-                logger.error(f"❌ Error closing session: {e}")
-        
-        # Clean up step tracking variables
+        # Clean up
         try:
             await asyncio.sleep(0.3)
             logger.info("Step cleanup completed successfully")
         except Exception as cleanup_error:
             logger.error(f"Error during step cleanup: {cleanup_error}")
     
-    # Finalize the message safely
+    # Finalize
     await safe_update_message(msg)
     logger.info("Streaming completed")
 

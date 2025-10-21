@@ -255,56 +255,6 @@ class MagenticExecutor(Executor):
                     error_msg = result.get("error", "Unknown error")
                     await ctx.yield_output(f"\n## {sub_topic_name} ❌\n")
                     await ctx.yield_output(f"Error: {error_msg}\n\n")
-
-                
-                
-            
-            # # Yield overall completion
-            # success_count = sum(1 for r in all_results if r.get("status") == "success")
-            # await ctx.yield_output(f"data: ### ✅ Magentic orchestration completed: {success_count}/{len(all_results)} successful\n\n")
-            
-            # ✅ 마지막 노드이므로 직접 streaming (orchestrator가 받을 수 있음)
-            
-            
-            # for idx, result in enumerate(all_results, 1):
-            #     sub_topic_name = result.get("sub_topic", f"Topic {idx}")
-            #     status = result.get("status", "unknown")
-                
-            #     if status == "success":
-            #         final_answer = result.get("final_answer", "")
-            #         orchestration_rounds = result.get("orchestration_rounds", "N/A")
-            #         reviewer_score = result.get("reviewer_score", "N/A")
-            #         ready_to_publish = result.get("ready_to_publish", False)
-                    
-            #         # ✅ Safety check
-            #         if not final_answer:
-            #             final_answer = "No answer generated"
-            #             logger.warning(f"[MagenticExecutor] No answer for '{sub_topic_name}'")
-                    
-            #         # Quality indicator emoji
-            #         quality_icon = "✅" if ready_to_publish else "⚠️"
-                    
-            #         # Yield sub-topic header with quality indicators
-            #         await ctx.yield_output(f"\n")
-            #         await ctx.yield_output(
-            #             f"data: ### {RESULT_MSG.get('write_research', 'Writing Answer')} for {sub_topic_name} "
-            #             f"{quality_icon} (Score: {reviewer_score}/5, Executed Rounds: {orchestration_rounds})\n\n"
-            #         )
-            #         await ctx.yield_output(f"## {sub_topic_name}\n\n")
-                    
-            #         # ✅ Stream answer in chunks
-            #         chunk_size = 100
-            #         for i in range(0, len(final_answer), chunk_size):
-            #             chunk = final_answer[i:i+chunk_size]
-            #             await ctx.yield_output(chunk)
-            #             await asyncio.sleep(0.01)
-                    
-            #         await ctx.yield_output("\n\n")
-            #     else:
-            #         # Failed sub-topic
-            #         error_msg = result.get("error", "Unknown error")
-            #         await ctx.yield_output(f"\n## {sub_topic_name} ❌\n")
-            #         await ctx.yield_output(f"Error: {error_msg}\n\n")
             
             logger.info("✅ Magentic orchestration streaming complete")
         
@@ -442,10 +392,10 @@ class MagenticExecutor(Executor):
                     await ctx.yield_output(f"data: ### 🔄 Orchestration Planning Rounds {orchestration_rounds}\n\n")
                     
                     # ✅ VERBOSE: Show orchestrator planning details
-                    # if VERBOSE_MODE and message_text:
-                    #     planning_text = json.dumps(message_text, ensure_ascii=False, indent=2)
-                    #     truncated = planning_text[:100] + "... [truncated for display]" if len(planning_text) > 100 else planning_text
-                    #     await ctx.yield_output(f"data: {send_step_with_code('💭 Planning: ', truncated)}\n\n")
+                    if VERBOSE_MODE and message_text:
+                        planning_text = json.dumps(message_text, ensure_ascii=False, indent=2)
+                        truncated = planning_text[:100] + "... [truncated for display]" if len(planning_text) > 100 else planning_text
+                        await ctx.yield_output(f"data: {send_step_with_code('💭 Planning: ', truncated)}\n\n")
                     
                 elif isinstance(event, MagenticAgentDeltaEvent):
                     # Track which agent is currently speaking
@@ -485,11 +435,11 @@ class MagenticExecutor(Executor):
                             await ctx.yield_output(f"data: ### {agent_emoji} Complete ✓ \n\n")
                         
                         # ✅ VERBOSE: Show agent output preview
-                        # if VERBOSE_MODE and agent_text:
-                        #     preview = json.dumps(agent_text, ensure_ascii=False, indent=2)
-                        #     truncated = preview[:100] + "... [truncated for display]" if len(preview) > 100 else preview
-                        #     agent_name = "ResearchAnalyst" if "analyst" in event.agent_id else ("ResearchWriter" if "writer" in event.agent_id else "Reviewer")
-                        #     await ctx.yield_output(f"data: {send_step_with_code(f'[{agent_name}] Preview', truncated)}\n\n")
+                        if VERBOSE_MODE and agent_text:
+                            preview = json.dumps(agent_text, ensure_ascii=False, indent=2)
+                            truncated = preview[:100] + "... [truncated for display]" if len(preview) > 100 else preview
+                            agent_name = "ResearchAnalyst" if "analyst" in event.agent_id else ("ResearchWriter" if "writer" in event.agent_id else "Reviewer")
+                            await ctx.yield_output(f"data: {send_step_with_code(f'[{agent_name}] Preview', truncated)}\n\n")
                 
                 elif isinstance(event, MagenticFinalResultEvent):
                     # ✅ MagenticFinalResultEvent에서 최종 결과 처리
@@ -532,9 +482,6 @@ class MagenticExecutor(Executor):
                                     final_answer = final_text
                                     logger.warning(f"[MagenticExecutor] No markdown found, using raw text")
                                 
-                                # if VERBOSE_MODE:
-                                #     preview = final_answer[:200] + "..." if len(final_answer) > 200 else final_answer
-                                #     await ctx.yield_output(f"data: {send_step_with_code('🎯 Final Answer Preview', preview)}\n\n")
                                 
                             except json.JSONDecodeError as e:
                                 logger.warning(f"[MagenticExecutor] Failed to parse JSON from final result: {e}")
