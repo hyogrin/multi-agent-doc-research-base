@@ -1,5 +1,4 @@
 import chainlit as cl
-import requests
 import os
 import sys
 import json
@@ -64,7 +63,7 @@ MULTI_AGENT_TYPES = {
     "MS Agent Framework Magentic": "afw_magentic",
     "Semantic Kernel GroupChat": "sk_group_chat",
     "Semantic Kernel Magentic(Deep-Research-Agents)": "sk_magentic",
-    "Vanilla AOAI SDK": "vanilla",
+    "Vanilla AOAI SDK": "vanilla"
 }
 
 # Internationalization constants
@@ -157,14 +156,6 @@ def find_starter_category_for_prompt(language: str, prompt: str) -> Optional[str
             return category
 
     return None
-
-def create_requests_session(max_retries: int = 3) -> requests.Session:
-    """Create a requests session with retry adapter"""
-    session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(max_retries=max_retries)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
 
 # ============================================================================
 # Starter Functions - 통합 및 중앙화
@@ -270,24 +261,37 @@ async def send_starters_as_actions(language: str):
 # ============================================================================
 
 async def check_upload_status_once(upload_id: str) -> dict | None:
-    """단발성 업로드 상태 조회 (폴링 루프 내부/액션 버튼에서 호출)"""
-    session = None
+    """단발성 업로드 상태 조회 (httpx 사용)"""
+    httpx_client = None
     try:
-        session = requests.Session()
-        resp = session.get(f"{UPLOAD_STATUS_URL}/{upload_id}", timeout=(10, 30))
-        if not resp.ok:
+        # ✅ httpx AsyncClient (짧은 타임아웃, 간단한 요청)
+        httpx_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=30.0)
+        )
+        
+        resp = await httpx_client.get(f"{UPLOAD_STATUS_URL}/{upload_id}")
+        
+        if resp.status_code != 200:
             return None
+        
         return resp.json()
+        
+    except httpx.TimeoutException as e:
+        logger.warning(f"[upload:{upload_id}] Timeout during status check: {e}")
+        return None
+    except httpx.HTTPError as e:
+        logger.warning(f"[upload:{upload_id}] HTTP error during status check: {e}")
+        return None
     except Exception as e:
         logger.warning(f"[upload:{upload_id}] 상태 조회 실패: {e}")
         return None
     finally:
-        # ✅ 반드시 session 정리
-        if session:
+        # ✅ httpx client 정리
+        if httpx_client:
             try:
-                session.close()
+                await httpx_client.aclose()
             except Exception as e:
-                logger.error(f"❌ Error closing status check session: {e}")
+                logger.error(f"❌ Error closing status check client: {e}")
 
 async def poll_upload_status_loop(upload_id: str, msg: cl.Message, interval: float = 3.0):
     """주기적으로 상태를 폴링해서 동일 메시지를 갱신"""
@@ -370,22 +374,36 @@ def start_progress_tracker(upload_id: str, files: List[str], base_message: cl.Me
     task = asyncio.create_task(poll_upload_status_loop(upload_id, base_message))
     upload_manager.add_upload(upload_id, files, base_message, task)
 
-async def handle_file_upload(files, settings=None, document_type: str = "IR_REPORT", company: str = None, industry: str = None, report_year: str = None, force_upload: bool = False):
-    """Unified file upload handler for all file types"""
+async def handle_file_upload(
+    files, 
+    settings=None, 
+    document_type: str = "IR_REPORT", 
+    company: str = None, 
+    industry: str = None, 
+    report_year: str = None, 
+    force_upload: bool = False
+):
+    """Unified file upload handler with httpx"""
+    httpx_client = None
+    
     try:
         # Initial upload message
-        status_message = cl.Message(content="📤 ** uploading documents...**\n\n uploading your files to AI Search...")
+        status_message = cl.Message(content="📤 **Uploading documents...**\n\nUploading your files to AI Search...")
         await status_message.send()
         
         # Process and validate files
-        files_payload, valid_files = [], []
+        files_payload = []
+        valid_files = []
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
         allowed_extensions = {'.pdf', '.docx', '.txt'}
         
-        session = create_requests_session()
+        # ✅ httpx AsyncClient 생성 (파일 다운로드용)
+        httpx_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=30.0, read=60.0)
+        )
         
         for att in files:
-            # Get filename - handle Chainlit file objects properly
+            # Get filename
             filename = None
             if hasattr(att, 'name'):
                 filename = att.name
@@ -401,13 +419,15 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
             # Check file extension
             file_ext = os.path.splitext(filename)[1].lower()
             if file_ext not in allowed_extensions:
-                await cl.Message(content=f"❌ **Unsupported file format**: {filename}\n\nSupported formats: PDF, DOCX, TXT").send()
+                await cl.Message(
+                    content=f"❌ **Unsupported file format**: {filename}\n\nSupported formats: PDF, DOCX, TXT"
+                ).send()
                 continue
             
             file_bytes = None
             content_type = "application/octet-stream"
 
-            # Get file content - handle Chainlit file objects properly
+            # Get file content
             if hasattr(att, "content") and att.content:
                 file_bytes = att.content
                 content_type = getattr(att, "mime", getattr(att, "content_type", content_type))
@@ -427,13 +447,14 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
                     file_bytes = b""
                 content_type = att.get("content_type", content_type)
             elif hasattr(att, "url"):
+                # ✅ httpx로 URL 다운로드
                 url = getattr(att, "url")
                 try:
-                    r = session.get(url, timeout=30)
+                    r = await httpx_client.get(url)
                     r.raise_for_status()
                     file_bytes = r.content
                     content_type = r.headers.get("Content-Type", content_type)
-                except Exception as e:
+                except httpx.HTTPError as e:
                     await cl.Message(content=f"❌ **File download failed**: {filename} - {e}").send()
                     continue
             else:
@@ -448,7 +469,9 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
 
             # Check file size
             if len(file_bytes) > MAX_FILE_SIZE:
-                await cl.Message(content=f"❌ **File size exceeded**: {filename}\n\nMaximum size: 50MB").send()
+                await cl.Message(
+                    content=f"❌ **File size exceeded**: {filename}\n\nMaximum size: 50MB"
+                ).send()
                 continue
 
             # Add to upload payload
@@ -468,7 +491,11 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
             return False
 
         # Update message with file list
-        status_message.content = f"📤 **Uploading files...**\n\nFiles to upload ({len(valid_files)}):\n" + "\n".join([f"• {f}" for f in valid_files])
+        status_message.content = (
+            f"📤 **Uploading files...**\n\n"
+            f"Files to upload ({len(valid_files)}):\n" + 
+            "\n".join([f"• {f}" for f in valid_files])
+        )
         await status_message.update()
 
         # Prepare form data
@@ -480,45 +507,66 @@ async def handle_file_upload(files, settings=None, document_type: str = "IR_REPO
             "force_upload": str(force_upload).lower()
         }
 
-        # Upload files
-        resp = session.post(UPLOAD_API_URL, files=files_payload, data=data, timeout=120)
-        
-        if resp.ok:
-            try:
-                resp_json = resp.json()
-                upload_id = resp_json.get("upload_id")
-                
-                if upload_id:
-                    # Start tracking upload status
-                    start_progress_tracker(upload_id, valid_files, status_message)
-                    return True
-                else:
-                    message = resp_json.get("message", "upload complete")
-                    status_message.content = f"✅ **upload response**: {message}"
+        # ✅ httpx로 multipart 업로드
+        try:
+            # httpx는 multipart 처리가 약간 다름
+            upload_files = [(name, (fname, fdata, ftype)) for name, (fname, fdata, ftype) in files_payload]
+            
+            resp = await httpx_client.post(
+                UPLOAD_API_URL,
+                files=upload_files,
+                data=data,
+                timeout=httpx.Timeout(connect=30.0, read=180.0)  # 업로드는 더 긴 타임아웃
+            )
+            
+            if resp.status_code == 200:
+                try:
+                    resp_json = resp.json()
+                    upload_id = resp_json.get("upload_id")
+                    
+                    if upload_id:
+                        # Start tracking upload status
+                        start_progress_tracker(upload_id, valid_files, status_message)
+                        return True
+                    else:
+                        message = resp_json.get("message", "upload complete")
+                        status_message.content = f"✅ **Upload response**: {message}"
+                        await status_message.update()
+                        return True
+                        
+                except Exception as e:
+                    status_message.content = f"✅ **Upload complete**: {resp.text}"
                     await status_message.update()
                     return True
-                    
-            except Exception as e:
-                status_message.content = f"✅ **upload complete**: {resp.text}"
+            else:
+                status_message.content = f"❌ **Upload failed**: {resp.status_code} - {resp.text}"
                 await status_message.update()
-                return True
-        else:
-            status_message.content = f"❌ **upload failed**: {resp.status_code} - {resp.text}"
+                return False
+                
+        except httpx.TimeoutException as e:
+            status_message.content = f"❌ **Upload timeout**: {e}"
             await status_message.update()
+            logger.error(f"Upload timeout: {e}")
+            return False
+        except httpx.HTTPError as e:
+            status_message.content = f"❌ **Upload HTTP error**: {e}"
+            await status_message.update()
+            logger.error(f"Upload HTTP error: {e}")
             return False
 
     except Exception as e:
-        await cl.Message(content=f"❌ **upload error**: {str(e)}").send()
+        await cl.Message(content=f"❌ **Upload error**: {str(e)}").send()
         logger.error(f"Upload error: {e}")
         return False
+        
     finally:
-        # ✅ Session 정리 추가
-        if session:
+        # ✅ httpx client 정리
+        if httpx_client:
             try:
-                session.close()
-                logger.info("🔌 Upload session closed successfully")
+                await httpx_client.aclose()
+                logger.info("🔌 Upload httpx client closed successfully")
             except Exception as e:
-                logger.error(f"❌ Error closing upload session: {e}")
+                logger.error(f"❌ Error closing upload client: {e}")
 
 @cl.set_chat_profiles
 async def chat_profile():

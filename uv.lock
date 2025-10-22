@@ -1275,7 +1275,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", specifier = "==1.0.0b251007" },
-    { name = "aiohttp", specifier = ">=3.8.0" },
+    { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=3.7.0" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
     { name = "azure-ai-documentintelligence", specifier = "==1.0.2" },

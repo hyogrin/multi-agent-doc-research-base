@@ -245,7 +245,7 @@ def decode_step_content(content: str, step_name_manager) -> Tuple[str, str, str]
                     code_content = parts[1].strip()  # Use raw content as fallback
         
         # # Generate unique step name using the manager not use anymore
-        unique_step_name = step_name_manager.get_unique_name(step_name) 
+        #unique_step_name = step_name_manager.get_unique_name(step_name) 
         
         return step_name, code_content, description
         
