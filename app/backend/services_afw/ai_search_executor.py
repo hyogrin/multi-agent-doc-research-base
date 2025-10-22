@@ -19,11 +19,15 @@ from azure.search.documents.models import (
     VectorizedQuery,
     QueryType,
     QueryCaptionType,
-    QueryAnswerType
+    QueryAnswerType,
 )
 from openai import AzureOpenAI
 from i18n.locale_msg import LOCALE_MESSAGES
-from utils.yield_message import send_step_with_code, send_step_with_input, send_step_with_code_and_input
+from utils.yield_message import (
+    send_step_with_code,
+    send_step_with_input,
+    send_step_with_code_and_input,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +35,14 @@ logger = logging.getLogger(__name__)
 class AISearchExecutor(Executor):
     """
     Executor for searching documents in Azure AI Search with multiple search methods.
-    
+
     This executor supports:
     - Hybrid search (text + vector)
     - Semantic search
     - Vector search
     - Traditional text search
     """
-    
+
     def __init__(
         self,
         id: str,
@@ -52,7 +56,7 @@ class AISearchExecutor(Executor):
     ):
         """
         Initialize the AI search executor with required clients.
-        
+
         Args:
             id: Executor ID
             search_endpoint: Azure AI Search endpoint
@@ -64,56 +68,59 @@ class AISearchExecutor(Executor):
             openai_api_version: Azure OpenAI API version
         """
         super().__init__(id=id)
-        
+
         # AI Search setup
         self.search_endpoint = search_endpoint or os.getenv("AZURE_AI_SEARCH_ENDPOINT")
         self.search_key = search_key or os.getenv("AZURE_AI_SEARCH_API_KEY")
         self.index_name = index_name or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
-        
+
         # OpenAI setup for embeddings
         self.openai_endpoint = openai_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         self.openai_key = openai_key or os.getenv("AZURE_OPENAI_API_KEY")
         self.embedding_deployment = embedding_deployment or os.getenv(
             "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"
         )
-        self.openai_api_version = openai_api_version or os.getenv("AZURE_OPENAI_API_VERSION")
-        
+        self.openai_api_version = openai_api_version or os.getenv(
+            "AZURE_OPENAI_API_VERSION"
+        )
+
         # Initialize clients
         self._init_clients()
-        
+
         logger.info(f"AISearchExecutor initialized with index: {self.index_name}")
-    
+
     def _init_clients(self):
         """Initialize Azure clients."""
         # Search client
         from azure.identity import DefaultAzureCredential
+
         if self.search_key:
             search_credential = AzureKeyCredential(self.search_key)
         else:
             search_credential = DefaultAzureCredential()
-            
+
         self.search_client = SearchClient(
             endpoint=self.search_endpoint,
             index_name=self.index_name,
-            credential=search_credential
+            credential=search_credential,
         )
-        
+
         # OpenAI client
         self.openai_client = AzureOpenAI(
             api_version=self.openai_api_version,
             azure_endpoint=self.openai_endpoint,
-            api_key=self.openai_key
+            api_key=self.openai_key,
         )
-    
+
     @handler
     async def search_documents(
         self,
         search_data: Dict[str, Any],
-        ctx: WorkflowContext[Dict[str, Any], str]  # Added str for yield_output
+        ctx: WorkflowContext[Dict[str, Any], str],  # Added str for yield_output
     ) -> None:
         """
         Search documents in Azure AI Search for each sub-topic.
-        
+
         Args:
             search_data: Dictionary with search parameters:
                 - sub_topics: List of sub-topics with queries
@@ -133,7 +140,7 @@ class AISearchExecutor(Executor):
             locale = metadata.get("locale", "ko-KR")
             verbose = metadata.get("verbose", False)
             LOCALE_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
-            
+
             sub_topics = search_data.get("sub_topics", [])
             search_type = search_data.get("search_type", "hybrid")
             filters = search_data.get("filters")
@@ -143,38 +150,44 @@ class AISearchExecutor(Executor):
             industry = search_data.get("industry")
             company = search_data.get("company")
             report_year = search_data.get("report_year")
-            
+
             # ✅ Yield starting message
             await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_ai_search']}\n\n")
-            
+
             if not sub_topics:
-                sub_topics = [{
-                    "sub_topic": "research report",
-                    "queries": [search_data.get("enriched_query")]
-                }]
-            
-            logger.info(f"[AISearchExecutor] Searching AI Search for {len(sub_topics)} sub-topics (type: {search_type})")
-            
+                sub_topics = [
+                    {
+                        "sub_topic": "research report",
+                        "queries": [search_data.get("enriched_query")],
+                    }
+                ]
+
+            logger.info(
+                f"[AISearchExecutor] Searching AI Search for {len(sub_topics)} sub-topics (type: {search_type})"
+            )
+
             # Search by sub-topic
             sub_topic_results = {}
-            
+
             for sub_topic_data in sub_topics:
                 sub_topic_name = sub_topic_data.get("sub_topic", "research")
                 queries = sub_topic_data.get("queries", [])
-                
+
                 sub_topic_documents = []
-                
+
                 for query in queries:
-                    logger.info(f"[AISearchExecutor] Searching for '{query}' in sub-topic '{sub_topic_name}'")
-                    
+                    logger.info(
+                        f"[AISearchExecutor] Searching for '{query}' in sub-topic '{sub_topic_name}'"
+                    )
+
                     # Generate query vector
                     query_vector = self._generate_embedding(query)
-                    
+
                     # Build filter expression
                     filter_expression = self._build_filters(
                         filters, document_type, industry, company, report_year
                     )
-                    
+
                     # Execute search
                     search_results = self._execute_search(
                         query=query,
@@ -182,70 +195,83 @@ class AISearchExecutor(Executor):
                         search_type=search_type,
                         filter_expression=filter_expression,
                         top_k=top_k,
-                        include_content=include_content
+                        include_content=include_content,
                     )
-                    
+
                     # Process results
-                    documents = self._process_search_results(search_results, include_content)
+                    documents = self._process_search_results(
+                        search_results, include_content
+                    )
                     sub_topic_documents.extend(documents)
-                
+
                 if sub_topic_documents:
                     # Store results keyed by sub_topic name
                     sub_topic_results[sub_topic_name] = {
                         "search_type": search_type,
                         "documents": sub_topic_documents,
-                        "total_results": len(sub_topic_documents)
+                        "total_results": len(sub_topic_documents),
                     }
-            
-            logger.info(f"[AISearchExecutor] Completed AI Search for {len(sub_topic_results)} sub-topics")
-            
-            
+
+            logger.info(
+                f"[AISearchExecutor] Completed AI Search for {len(sub_topic_results)} sub-topics"
+            )
+
             # ✅ Yield completion message (SK compatible format with results)
             if verbose and sub_topic_results:
-                results_str = json.dumps(sub_topic_results, ensure_ascii=False, indent=2)
-                truncated = results_str[:200] + "... [truncated for display]" if len(results_str) > 200 else results_str
-                await ctx.yield_output(f"data: {send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated)}\n\n")
+                results_str = json.dumps(
+                    sub_topic_results, ensure_ascii=False, indent=2
+                )
+                truncated = (
+                    results_str[:200] + "... [truncated for display]"
+                    if len(results_str) > 200
+                    else results_str
+                )
+                await ctx.yield_output(
+                    f"data: {send_step_with_code(LOCALE_MSG['ai_search_context_done'], truncated)}\n\n"
+                )
             else:
-                await ctx.yield_output(f"data: ### {LOCALE_MSG['ai_search_context_done']}\n\n")
-            
+                await ctx.yield_output(
+                    f"data: ### {LOCALE_MSG['ai_search_context_done']}\n\n"
+                )
+
             # Send results to next executor (using SK-compatible key name)
-            await ctx.send_message({
-                **search_data,
-                "sub_topic_ai_search_contexts": sub_topic_results
-            })
-            
+            await ctx.send_message(
+                {**search_data, "sub_topic_ai_search_contexts": sub_topic_results}
+            )
+
         except Exception as e:
             error_msg = f"AI Search failed: {str(e)}"
             logger.error(f"[AISearchExecutor] {error_msg}")
-            await ctx.send_message({
-                **search_data,
-                "sub_topic_ai_search_contexts": {},
-                "ai_search_error": error_msg
-            })
-    
+            await ctx.send_message(
+                {
+                    **search_data,
+                    "sub_topic_ai_search_contexts": {},
+                    "ai_search_error": error_msg,
+                }
+            )
+
     def _generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using Azure OpenAI."""
         try:
             response = self.openai_client.embeddings.create(
-                input=text,
-                model=self.embedding_deployment
+                input=text, model=self.embedding_deployment
             )
             return response.data[0].embedding
         except Exception as e:
             logger.error(f"Embedding generation failed: {e}")
             return []
-    
+
     def _build_filters(
         self,
         filters: Optional[str],
         document_type: Optional[str],
         industry: Optional[str],
         company: Optional[str],
-        report_year: Optional[str]
+        report_year: Optional[str],
     ) -> Optional[str]:
         """Build OData filter expression."""
         filter_parts = []
-        
+
         if filters:
             filter_parts.append(filters)
         if document_type:
@@ -256,9 +282,9 @@ class AISearchExecutor(Executor):
             filter_parts.append(f"company eq '{company}'")
         if report_year:
             filter_parts.append(f"report_year eq '{report_year}'")
-        
+
         return " and ".join(filter_parts) if filter_parts else None
-    
+
     def _execute_search(
         self,
         query: str,
@@ -266,24 +292,20 @@ class AISearchExecutor(Executor):
         search_type: str,
         filter_expression: Optional[str],
         top_k: int,
-        include_content: bool
+        include_content: bool,
     ):
         """Execute search based on search type."""
         select_fields = self._get_select_fields(include_content)
 
         vector_queries = [
             VectorizedQuery(
-                vector=query_vector,
-                k_nearest_neighbors=top_k,
-                fields="content_vector"
+                vector=query_vector, k_nearest_neighbors=top_k, fields="content_vector"
             ),
             VectorizedQuery(
-                vector=query_vector,
-                k_nearest_neighbors=top_k,
-                fields="summary_vector"
-            )
+                vector=query_vector, k_nearest_neighbors=top_k, fields="summary_vector"
+            ),
         ]
-        
+
         if search_type == "hybrid":
             # Hybrid search: text + vector
             return self.search_client.search(
@@ -293,9 +315,9 @@ class AISearchExecutor(Executor):
                 select=select_fields,
                 top=top_k,
                 query_type=QueryType.SEMANTIC,
-                semantic_configuration_name="semantic-config"
+                semantic_configuration_name="semantic-config",
             )
-            
+
         elif search_type == "semantic":
             # Semantic search with captions
             return self.search_client.search(
@@ -306,9 +328,9 @@ class AISearchExecutor(Executor):
                 query_type=QueryType.SEMANTIC,
                 semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
-                query_answer=QueryAnswerType.EXTRACTIVE
+                query_answer=QueryAnswerType.EXTRACTIVE,
             )
-            
+
         elif search_type == "vector":
             # Pure vector search
             return self.search_client.search(
@@ -316,34 +338,36 @@ class AISearchExecutor(Executor):
                 vector_queries=vector_queries,
                 filter=filter_expression,
                 select=select_fields,
-                top=top_k
+                top=top_k,
             )
-            
+
         elif search_type == "text":
             # Traditional text search
             return self.search_client.search(
                 search_text=query,
                 filter=filter_expression,
                 select=select_fields,
-                top=top_k
+                top=top_k,
             )
-        
+
         else:
             raise ValueError(f"Unknown search type: {search_type}")
-    
+
     def _get_select_fields(self, include_content: bool) -> str:
         """Get select fields for search query."""
         base_fields = "docId,title,file_name,summary,document_type,industry,company,report_year,page_number,upload_date,keywords"
-        
+
         if include_content:
             return f"{base_fields},content"
         else:
             return base_fields
-    
-    def _process_search_results(self, search_results, include_content: bool) -> List[Dict[str, Any]]:
+
+    def _process_search_results(
+        self, search_results, include_content: bool
+    ) -> List[Dict[str, Any]]:
         """Process search results into a standardized format."""
         documents = []
-        
+
         for result in search_results:
             doc = {
                 "docId": result.get("docId"),
@@ -359,18 +383,17 @@ class AISearchExecutor(Executor):
                 "keywords": result.get("keywords"),
                 "score": result.get("@search.score"),
             }
-            
+
             if include_content:
                 doc["content"] = result.get("content")
-            
+
             # Add semantic captions if available
             if hasattr(result, "@search.captions"):
                 doc["captions"] = [
                     {"text": caption.text, "highlights": caption.highlights}
                     for caption in result["@search.captions"]
                 ]
-            
-            documents.append(doc)
-        
-        return documents
 
+            documents.append(doc)
+
+        return documents

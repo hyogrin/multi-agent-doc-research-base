@@ -1,4 +1,12 @@
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    UploadFile,
+    File,
+    Form,
+    BackgroundTasks,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import logging
@@ -27,22 +35,22 @@ log_filename = f"app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    #TODO: use this for debugging
+    # TODO: use this for debugging
     handlers=[
         # logging.FileHandler(log_filename, encoding='utf-8'),
         logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
     ],
-    force=True
+    force=True,
 )
 
 # Semantic Kernel의 상세한 로그 억제
 semantic_kernel_loggers = [
     "semantic_kernel.agents.runtime.in_process_runtime",
-    "semantic_kernel.agents.runtime.in_process_runtime.events", 
+    "semantic_kernel.agents.runtime.in_process_runtime.events",
     "semantic_kernel.agents.runtime",
     "semantic_kernel.agents",
     "in_process_runtime.events",
-    "in_process_runtime"
+    "in_process_runtime",
 ]
 
 for logger_name in semantic_kernel_loggers:
@@ -96,7 +104,7 @@ def get_orchestrator_afw() -> PlanSearchOrchestratorAFW:
 @app.router.lifespan_context
 async def lifespan(app: FastAPI):
     logger.info("Starting up Microsoft Chatbot API...")
-    
+
     # Pre-initialize orchestrators for faster first request
     try:
         get_orchestrator_sk()
@@ -104,9 +112,9 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Orchestrators pre-initialized successfully")
     except Exception as e:
         logger.warning(f"⚠️ Failed to pre-initialize orchestrators: {e}")
-    
+
     yield
-    
+
     logger.info("Shutting down Microsoft Chatbot API...")
     # Clean up orchestrators if needed
     global _orchestrator_sk, _orchestrator_afw
@@ -119,16 +127,26 @@ async def health_check():
     return {"status": "ok"}
 
 
-async def update_upload_status(upload_id: str, status: str, message: str = "", progress: int = 0, file_results: List = None):
+async def update_upload_status(
+    upload_id: str,
+    status: str,
+    message: str = "",
+    progress: int = 0,
+    file_results: List = None,
+):
     """Update upload status in tracker"""
     if upload_id in upload_status_tracker:
-        upload_status_tracker[upload_id].update({
-            "status": status,
-            "message": message,
-            "progress": progress,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "file_results": file_results or upload_status_tracker[upload_id].get("file_results", [])
-        })
+        upload_status_tracker[upload_id].update(
+            {
+                "status": status,
+                "message": message,
+                "progress": progress,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "file_results": file_results
+                or upload_status_tracker[upload_id].get("file_results", []),
+            }
+        )
+
 
 async def process_uploaded_files_background(
     upload_id: str,
@@ -138,25 +156,27 @@ async def process_uploaded_files_background(
     company: str,
     industry: str,
     report_year: str,
-    force_upload: bool
+    force_upload: bool,
 ):
     """Background task to process uploaded files with status tracking."""
     try:
         import json
-        
+
         # Update status to processing
         await update_upload_status(upload_id, "processing", "Processing files...", 10)
-        
+
         upload_plugin = UnifiedFileUploadPlugin()
-        
+
         # Update status before upload
-        await update_upload_status(upload_id, "processing", "Uploading to vector database...", 50)
-        
+        await update_upload_status(
+            upload_id, "processing", "Uploading to vector database...", 50
+        )
+
         # Create file mapping for actual filenames
         file_mapping = {}
         for temp_path, original_name in zip(file_paths, file_names):
             file_mapping[temp_path] = original_name
-        
+
         result = await upload_plugin.upload_documents(
             file_paths=json.dumps(file_paths),
             file_names=json.dumps(file_names),  # 실제 파일명도 전달
@@ -164,35 +184,36 @@ async def process_uploaded_files_background(
             company=company,
             industry=industry,
             report_year=report_year,
-            force_upload=str(force_upload).lower()
+            force_upload=str(force_upload).lower(),
         )
-        
+
         logger.info(f"Background file processing completed: {result}")
-        
+
         # Parse result and update status
         if isinstance(result, str):
             import json
+
             result_data = json.loads(result)
         else:
             result_data = result
-        
+
         if result_data.get("status") == "completed":
             await update_upload_status(
-                upload_id, 
-                "completed", 
-                f"upload complete! {result_data.get('successful_uploads', 0)} files successfully uploaded", 
+                upload_id,
+                "completed",
+                f"upload complete! {result_data.get('successful_uploads', 0)} files successfully uploaded",
                 100,
-                result_data.get("results", [])
+                result_data.get("results", []),
             )
         else:
             await update_upload_status(
-                upload_id, 
-                "error", 
-                f"upload failed: {result_data.get('message', 'Unknown error')}", 
+                upload_id,
+                "error",
+                f"upload failed: {result_data.get('message', 'Unknown error')}",
                 100,
-                result_data.get("results", [])
+                result_data.get("results", []),
             )
-        
+
         # Clean up temporary files
         for file_path in file_paths:
             try:
@@ -200,10 +221,12 @@ async def process_uploaded_files_background(
                     os.remove(file_path)
             except Exception as e:
                 logger.warning(f"Failed to remove temp file {file_path}: {e}")
-                
+
     except Exception as e:
         logger.error(f"Background file processing failed: {str(e)}")
-        await update_upload_status(upload_id, "error", f"처리 중 오류 발생: {str(e)}", 100)
+        await update_upload_status(
+            upload_id, "error", f"처리 중 오류 발생: {str(e)}", 100
+        )
 
 
 @app.post("/upload_documents", response_model=FileUploadResponse)
@@ -214,7 +237,7 @@ async def upload_documents_endpoint(
     company: str = Form(None),
     industry: str = Form(None),
     report_year: str = Form(None),
-    force_upload: bool = Form(False)
+    force_upload: bool = Form(False),
 ):
     """
     Upload multiple documents for processing and vector storage.
@@ -222,52 +245,53 @@ async def upload_documents_endpoint(
     """
     # Generate unique upload ID
     upload_id = str(uuid.uuid4())
-    
+
     # Validate file count
     if len(files) > 10:
         raise HTTPException(
-            status_code=400,
-            detail="Maximum 10 files allowed per upload"
+            status_code=400, detail="Maximum 10 files allowed per upload"
         )
-    
+
     # Validate file types
-    allowed_extensions = {'.pdf', '.docx', '.txt'}
+    allowed_extensions = {".pdf", ".docx", ".txt"}
     uploaded_files = []
     temp_file_paths = []
-    
+
     try:
         temp_file_paths = []
         original_filenames = []  # 실제 파일명 저장
-        
+
         for file in files:
             # Check file extension
             file_ext = os.path.splitext(file.filename)[1].lower()
             if file_ext not in allowed_extensions:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"File type {file_ext} not supported. Allowed: {', '.join(allowed_extensions)}"
+                    detail=f"File type {file_ext} not supported. Allowed: {', '.join(allowed_extensions)}",
                 )
-            
+
             # Save original filename
             original_filenames.append(file.filename)
-            
+
             # Save file to temporary location
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
             temp_file_path = temp_file.name
-            
+
             # Read and save file content
             content = await file.read()
             temp_file.write(content)
             temp_file.close()
-            
+
             temp_file_paths.append(temp_file_path)
-            uploaded_files.append({
-                "filename": file.filename,
-                "file_path": temp_file_path,
-                "file_size": len(content),
-                "content_type": file.content_type
-            })
-        
+            uploaded_files.append(
+                {
+                    "filename": file.filename,
+                    "file_path": temp_file_path,
+                    "file_size": len(content),
+                    "content_type": file.content_type,
+                }
+            )
+
         # Initialize upload status
         upload_status_tracker[upload_id] = {
             "upload_id": upload_id,
@@ -278,9 +302,9 @@ async def upload_documents_endpoint(
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "files": [f["filename"] for f in uploaded_files],
-            "file_results": []
+            "file_results": [],
         }
-        
+
         # Add background task for processing
         background_tasks.add_task(
             process_uploaded_files_background,
@@ -291,9 +315,9 @@ async def upload_documents_endpoint(
             company=company,
             industry=industry,
             report_year=report_year,
-            force_upload=force_upload
+            force_upload=force_upload,
         )
-        
+
         return FileUploadResponse(
             status="processing",
             total_files=len(files),
@@ -301,9 +325,9 @@ async def upload_documents_endpoint(
             failed_uploads=0,
             results=[],
             message=f"Files uploaded successfully. Processing {len(files)} files in background.",
-            upload_id=upload_id  # Return upload_id for status tracking
+            upload_id=upload_id,  # Return upload_id for status tracking
         )
-        
+
     except Exception as e:
         # Clean up temp files on error
         for temp_path in temp_file_paths:
@@ -312,31 +336,28 @@ async def upload_documents_endpoint(
                     os.remove(temp_path)
             except Exception:
                 pass
-        
+
         logger.error(f"File upload error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"File upload failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
 
 @app.get("/upload_status/{upload_id}")
 async def get_upload_status(upload_id: str):
     """Get upload status by upload ID"""
     if upload_id not in upload_status_tracker:
-        raise HTTPException(
-            status_code=404,
-            detail="Upload ID not found"
-        )
-    
+        raise HTTPException(status_code=404, detail="Upload ID not found")
+
     return upload_status_tracker[upload_id]
+
 
 @app.get("/upload_status")
 async def list_upload_status():
     """Get all upload statuses"""
     return {
         "total_uploads": len(upload_status_tracker),
-        "uploads": list(upload_status_tracker.values())
+        "uploads": list(upload_status_tracker.values()),
     }
+
 
 @app.get("/plan_search")
 async def plan_search_info():
@@ -346,14 +367,23 @@ async def plan_search_info():
         "method": "POST",
         "description": "Doc Researchendpoint for processing chat requests",
         "required_fields": ["messages"],
-        "optional_fields": ["max_tokens", "temperature", "query_rewrite", "planning", "search_engine", "stream", "locale"],
+        "optional_fields": [
+            "max_tokens",
+            "temperature",
+            "query_rewrite",
+            "planning",
+            "search_engine",
+            "stream",
+            "locale",
+        ],
         "example_usage": "Send POST request with JSON payload containing messages array",
-        "error": "This endpoint only accepts POST requests. Please use POST method with proper JSON payload."
+        "error": "This endpoint only accepts POST requests. Please use POST method with proper JSON payload.",
     }
+
 
 @app.post("/plan_search", response_model=ChatResponse)
 async def plan_search_endpoint(
-    request: PlanSearchRequest, 
+    request: PlanSearchRequest,
 ):
     """
     Process chat request using appropriate orchestrator based on multi_agent_type.
@@ -364,12 +394,16 @@ async def plan_search_endpoint(
         multi_agent_type = request.multi_agent_type or "afw_group_chat"
         print(f"multi_agent_type: {multi_agent_type}")
         if multi_agent_type.startswith("MS Agent Framework"):
-            logger.info(f"📊 Using Agent Framework (AFW) orchestrator for: {multi_agent_type}")
+            logger.info(
+                f"📊 Using Agent Framework (AFW) orchestrator for: {multi_agent_type}"
+            )
             plan_search_executor = get_orchestrator_afw()
         else:
-            logger.info(f"📊 Using Semantic Kernel (SK) orchestrator for: {multi_agent_type}")
+            logger.info(
+                f"📊 Using Semantic Kernel (SK) orchestrator for: {multi_agent_type}"
+            )
             plan_search_executor = get_orchestrator_sk()
-        
+
         if request.stream:
             # ✅ SSE 스트리밍 응답 최적화
             return StreamingResponse(
@@ -379,7 +413,7 @@ async def plan_search_endpoint(
                     request.temperature,
                     request.research,
                     request.planning,
-                    request.search_engine,  
+                    request.search_engine,
                     stream=True,
                     elapsed_time=True,
                     locale=request.locale,
@@ -395,10 +429,10 @@ async def plan_search_endpoint(
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",  # Nginx 버퍼링 비활성화
-                    "Transfer-Encoding": "chunked"
-                }
+                    "Transfer-Encoding": "chunked",
+                },
             )
-        
+
         # Non-streaming response
         response_generator = plan_search_executor.generate_response(
             request.messages,
@@ -416,24 +450,21 @@ async def plan_search_endpoint(
             multi_agent_type=request.multi_agent_type,
             verbose=request.verbose,
         )
-        
+
         response = await response_generator.__anext__()
-        
-        return ChatResponse(
-            message=response,
-            success=True
-        )
+
+        return ChatResponse(message=response, success=True)
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate response: {str(e)}"
+            status_code=500, detail=f"Failed to generate response: {str(e)}"
         )
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "An unexpected error occurred. Please try again later."}
+        content={"detail": "An unexpected error occurred. Please try again later."},
     )
