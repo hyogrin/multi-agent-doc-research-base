@@ -18,23 +18,30 @@ template: |
   ----- Scope & Constraints -----
   - Answer the user's overall question THROUGH THE LENS of the given sub_topic: "{sub_topic}".
   - Use ONLY the provided contexts; do NOT invent facts or use prior knowledge.
-  - Cite sources explicitly based on the contexts. Extract URLs from context entries like:
-  - 'url': 'https://example.com' → use this as source
+  - Cite sources explicitly based on the contexts. Extract URLs/file names from context entries like:
+  - 'url': 'https://example.com' → use this as source for claim reference
+  - 'file': 'SPRi AI Brief_8_F.pdf' → use this as source for claim reference
   - 'title': 'Document Title' → use this for claim reference
-  - Preserve valid citations from the writer draft where possible; add or adjust citations for any modified or newly added claims.
   - Be concise but substantive: clear structure, tight reasoning, evidence-backed claims.
   - Prefer recent data (as of {current_date}) if present in contexts.
   - Respect token budget: aim under {max_tokens} tokens for 'revised_answer_markdown'.
+  - **Present data using tables**: When showing statistics, comparisons, or structured data, use markdown tables.
+  - Utilize tables, statistics, and case studies included in the context to enhance the credibility of your arguments.
+  - Put the data and evidence to support your analysis.
   - Don't include any conclusory remarks outside the scope of '{sub_topic}'.
-  - If a key claim cannot be supported by the contexts, either remove it or list it in 'major_issues' and set 'ready_to_publish': false.
   
 
-  ----- Style Guide (for revised_answer_markdown) -----
-  - Markdown allowed: headings (#), bold (**), bullet lists (-) only.
-  - no table, no code blocks, no inline HTML unless absolutely necessary.
+  ----- Style Guide (for draft_answer_markdown) -----
+  - Markdown allowed: headings (#), bold (**), bullet lists (-), tables (|).
+  - Tables: Use markdown table syntax when presenting structured data
+    Example:
+    | Column1 | Column2 |
+    |---------|---------|
+    | Data1   | Data2   |
+  - No code blocks, no inline HTML unless absolutely necessary.
   - Include 1 emoji if natural (max 2).
-  - If a correction is needed, append a single line starting with "Correction: ..."
-  - Provide clickable reference links based on the retrieved sources.  
+  - If a correction is needed, append a single line starting with "정정: ..."
+  - Provide clickable reference links based on the retrieved sources.
 
   ----- Contexts -----
   {contexts}
@@ -48,8 +55,8 @@ template: |
     "revised_answer_markdown": "<your revised answer in markdown, abiding by the style guide>",
     "citations": [
       {{
-        "claim": "<short claim or section it supports>",
-        "source": "<URL or source_id from contexts>"
+        "title": "<short title for claim reference or section it supports>",
+        "source": "<file name or source_id from contexts>"
       }}
     ],
     "reviewer_evaluation_score": <integer 1-5>,

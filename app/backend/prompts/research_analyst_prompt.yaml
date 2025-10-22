@@ -32,7 +32,7 @@ template: |
       {{"type": "statistic|example", "description": "<detail>", "source": "<URL>"}}
     ],
     "sources": [
-      {{"url": "<URL>", "title": "<title>", "relevance": "<why important>"}}
+      {{"source": "<URL/file name>", "title": "<title>", "relevance": "<why important>"}}
     ],
     "gaps": ["<missing info>"],
     "writer_notes": "<guidance for writer>"
@@ -42,7 +42,7 @@ template: |
   - Output ONLY valid JSON
   - Use double quotes
   - No trailing commas
-  - Extract URLs from contexts (look for "Source: https://...")
+  - Extract URLs/file names from contexts (look for "Source: https://...", "*.pdf")
   - If no clear JSON structure is feasible, simplify to: {{"summary": "<text>", "sources": []}}
 
   Generate analysis now:

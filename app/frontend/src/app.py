@@ -15,7 +15,7 @@ from pathlib import Path
 from io import BytesIO
 from enum import Enum
 import os
-import httpx
+import aiohttp
 os.environ["CHAINLIT_CORS_ALLOW_ORIGIN"] = "*"  # 개발 환경용, 프로덕션에서는 특정 도메인 지정
 
 # Import classes and utilities from app_utils
@@ -261,35 +261,38 @@ async def send_starters_as_actions(language: str):
 # ============================================================================
 
 async def check_upload_status_once(upload_id: str) -> dict | None:
-    """단발성 업로드 상태 조회 (httpx 사용)"""
-    httpx_client = None
+    """단발성 업로드 상태 조회 (aiohttp 사용)"""
+    aiohttp_session = None
     try:
-        # ✅ httpx AsyncClient (짧은 타임아웃, 간단한 요청)
-        httpx_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=30.0)
+        # ✅ aiohttp ClientSession (짧은 타임아웃, 간단한 요청)
+        timeout = aiohttp.ClientTimeout(
+            total=None,
+            connect=10.0,
+            sock_read=30.0
         )
+        aiohttp_session = aiohttp.ClientSession(timeout=timeout)
         
-        resp = await httpx_client.get(f"{UPLOAD_STATUS_URL}/{upload_id}")
+        async with aiohttp_session.get(f"{UPLOAD_STATUS_URL}/{upload_id}") as resp:
+            if resp.status != 200:
+                return None
+            
+            return await resp.json()
         
-        if resp.status_code != 200:
-            return None
-        
-        return resp.json()
-        
-    except httpx.TimeoutException as e:
-        logger.warning(f"[upload:{upload_id}] Timeout during status check: {e}")
-        return None
-    except httpx.HTTPError as e:
+    except aiohttp.ClientError as e:
         logger.warning(f"[upload:{upload_id}] HTTP error during status check: {e}")
+        return None
+    except asyncio.TimeoutError as e:
+        logger.warning(f"[upload:{upload_id}] Timeout during status check: {e}")
         return None
     except Exception as e:
         logger.warning(f"[upload:{upload_id}] 상태 조회 실패: {e}")
         return None
     finally:
-        # ✅ httpx client 정리
-        if httpx_client:
+        # ✅ aiohttp client 정리
+        if aiohttp_session and not aiohttp_session.closed:
             try:
-                await httpx_client.aclose()
+                await aiohttp_session.close()
+                await asyncio.sleep(0.1)  # Graceful cleanup
             except Exception as e:
                 logger.error(f"❌ Error closing status check client: {e}")
 
@@ -383,8 +386,8 @@ async def handle_file_upload(
     report_year: str = None, 
     force_upload: bool = False
 ):
-    """Unified file upload handler with httpx"""
-    httpx_client = None
+    """Unified file upload handler with aiohttp"""
+    aiohttp_session = None
     
     try:
         # Initial upload message
@@ -397,9 +400,15 @@ async def handle_file_upload(
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
         allowed_extensions = {'.pdf', '.docx', '.txt'}
         
-        # ✅ httpx AsyncClient 생성 (파일 다운로드용)
-        httpx_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=30.0, read=60.0)
+        # ✅ aiohttp ClientSession 생성 (파일 다운로드 + 업로드용)
+        timeout = aiohttp.ClientTimeout(
+            total=None,
+            connect=30.0,
+            sock_read=60.0
+        )
+        aiohttp_session = aiohttp.ClientSession(
+            timeout=timeout,
+            connector=aiohttp.TCPConnector(limit=10)
         )
         
         for att in files:
@@ -447,14 +456,14 @@ async def handle_file_upload(
                     file_bytes = b""
                 content_type = att.get("content_type", content_type)
             elif hasattr(att, "url"):
-                # ✅ httpx로 URL 다운로드
+                # ✅ aiohttp로 URL 다운로드
                 url = getattr(att, "url")
                 try:
-                    r = await httpx_client.get(url)
-                    r.raise_for_status()
-                    file_bytes = r.content
-                    content_type = r.headers.get("Content-Type", content_type)
-                except httpx.HTTPError as e:
+                    async with aiohttp_session.get(url) as r:
+                        r.raise_for_status()
+                        file_bytes = await r.read()
+                        content_type = r.headers.get("Content-Type", content_type)
+                except aiohttp.ClientError as e:
                     await cl.Message(content=f"❌ **File download failed**: {filename} - {e}").send()
                     continue
             else:
@@ -475,7 +484,7 @@ async def handle_file_upload(
                 continue
 
             # Add to upload payload
-            files_payload.append(("files", (filename, BytesIO(file_bytes), content_type)))
+            files_payload.append((filename, BytesIO(file_bytes), content_type))
             valid_files.append(filename)
             logger.info(f"Added file to upload: {filename} ({len(file_bytes)} bytes)")
 
@@ -498,57 +507,69 @@ async def handle_file_upload(
         )
         await status_message.update()
 
-        # Prepare form data
-        data = {
-            "document_type": document_type,
-            "company": company or "",
-            "industry": industry or "",
-            "report_year": report_year or "",
-            "force_upload": str(force_upload).lower()
-        }
+        # Prepare form data with aiohttp
+        data = aiohttp.FormData()
+        data.add_field("document_type", document_type)
+        data.add_field("company", company or "")
+        data.add_field("industry", industry or "")
+        data.add_field("report_year", report_year or "")
+        data.add_field("force_upload", str(force_upload).lower())
+        
+        # Add files to form data
+        for filename, file_data, content_type in files_payload:
+            data.add_field(
+                "files",
+                file_data,
+                filename=filename,
+                content_type=content_type
+            )
 
-        # ✅ httpx로 multipart 업로드
+        # ✅ aiohttp로 multipart 업로드 (긴 타임아웃)
         try:
-            # httpx는 multipart 처리가 약간 다름
-            upload_files = [(name, (fname, fdata, ftype)) for name, (fname, fdata, ftype) in files_payload]
-            
-            resp = await httpx_client.post(
-                UPLOAD_API_URL,
-                files=upload_files,
-                data=data,
-                timeout=httpx.Timeout(connect=30.0, read=180.0)  # 업로드는 더 긴 타임아웃
+            upload_timeout = aiohttp.ClientTimeout(
+                total=None,
+                connect=30.0,
+                sock_read=180.0  # 업로드는 더 긴 타임아웃
             )
             
-            if resp.status_code == 200:
-                try:
-                    resp_json = resp.json()
-                    upload_id = resp_json.get("upload_id")
-                    
-                    if upload_id:
-                        # Start tracking upload status
-                        start_progress_tracker(upload_id, valid_files, status_message)
-                        return True
-                    else:
-                        message = resp_json.get("message", "upload complete")
-                        status_message.content = f"✅ **Upload response**: {message}"
+            async with aiohttp_session.post(
+                UPLOAD_API_URL,
+                data=data,
+                timeout=upload_timeout
+            ) as resp:
+                
+                if resp.status == 200:
+                    try:
+                        resp_json = await resp.json()
+                        upload_id = resp_json.get("upload_id")
+                        
+                        if upload_id:
+                            # Start tracking upload status
+                            start_progress_tracker(upload_id, valid_files, status_message)
+                            return True
+                        else:
+                            message = resp_json.get("message", "upload complete")
+                            status_message.content = f"✅ **Upload response**: {message}"
+                            await status_message.update()
+                            return True
+                            
+                    except Exception as e:
+                        resp_text = await resp.text()
+                        status_message.content = f"✅ **Upload complete**: {resp_text}"
                         await status_message.update()
                         return True
-                        
-                except Exception as e:
-                    status_message.content = f"✅ **Upload complete**: {resp.text}"
+                else:
+                    resp_text = await resp.text()
+                    status_message.content = f"❌ **Upload failed**: {resp.status} - {resp_text}"
                     await status_message.update()
-                    return True
-            else:
-                status_message.content = f"❌ **Upload failed**: {resp.status_code} - {resp.text}"
-                await status_message.update()
-                return False
+                    return False
                 
-        except httpx.TimeoutException as e:
+        except asyncio.TimeoutError as e:
             status_message.content = f"❌ **Upload timeout**: {e}"
             await status_message.update()
             logger.error(f"Upload timeout: {e}")
             return False
-        except httpx.HTTPError as e:
+        except aiohttp.ClientError as e:
             status_message.content = f"❌ **Upload HTTP error**: {e}"
             await status_message.update()
             logger.error(f"Upload HTTP error: {e}")
@@ -560,11 +581,12 @@ async def handle_file_upload(
         return False
         
     finally:
-        # ✅ httpx client 정리
-        if httpx_client:
+        # ✅ aiohttp client 정리
+        if aiohttp_session and not aiohttp_session.closed:
             try:
-                await httpx_client.aclose()
-                logger.info("🔌 Upload httpx client closed successfully")
+                await aiohttp_session.close()
+                await asyncio.sleep(0.1)  # Graceful cleanup
+                logger.info("🔌 Upload aiohttp client closed successfully")
             except Exception as e:
                 logger.error(f"❌ Error closing upload client: {e}")
 
@@ -698,242 +720,266 @@ async def setup_agent(settings_dict: Dict[str, Any]):
     await cl.Message(content="⚙️ Settings updated successfully!").send()
 
 async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
-    """Stream-enabled chat function with httpx for better async support"""
+    """Stream-enabled chat function with aiohttp for production-grade long-running connections"""
     if not message or message.strip() == "":
         return
-    
-    # Get conversation history
-    message_history = cl.chat_context.to_openai()
-    
-    # Helper function to clean text content
-    def clean_response_text(text: str) -> str:
-        """Clean response text to prevent unwanted markdown formatting"""
-        cleaned_text = text.replace("~~", "==")
-        return cleaned_text
     
     # Prepare the API payload
     payload = create_api_payload(settings)
     
-    # Debug logging
-    logger.info(f"API Payload: research={settings.research}, web_search={settings.web_search}, planning={settings.planning},"
-          f"ytb_search={settings.ytb_search}, mcp_server={settings.mcp_server}, ai_search={settings.ai_search}, "
-          f"multi_agent_type={settings.multi_agent_type}, search_engine={settings.search_engine}, "
-          f"max_tokens={settings.max_tokens}, temperature={settings.temperature}, "
-          f"language={settings.language}, verbose={settings.verbose}")
+    # Debug logging (생략)
     
     # Create message for streaming response
     ui_text = UI_TEXT[settings.language]
     msg = cl.Message(content="")
     await msg.send()
     
-    # ✅ httpx client 초기화
-    httpx_client = None
+    # ✅ aiohttp 설정: 장시간 연결 유지에 최적화
+    timeout = aiohttp.ClientTimeout(
+        total=None,              # 무제한 (multi-agent는 예측 불가)
+        connect=10,              # 연결 시작 10초
+        sock_connect=10,         # 소켓 연결 10초
+        sock_read=300            # ✅ 소켓 읽기 300초 (5분)
+    )
     
-    try:
-        # ✅ httpx AsyncClient with custom timeouts
-        httpx_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=90.0,      # 연결 타임아웃: 90초
-                read=1200.0,        # 읽기 타임아웃: 20분 (긴 응답 대응)
-                write=60.0,        # 쓰기 타임아웃: 60초
-                pool=None          # 풀 타임아웃: 무제한
-            ),
-            limits=httpx.Limits(
-                max_keepalive_connections=5,
-                max_connections=10,
-                keepalive_expiry=600.0  # keepalive 연결 유지 시간: 10분
-            ),
-            follow_redirects=True
-        )
-        
-        api_url = SK_API_URL
-        
-        # Create step for API call
-        async with cl.Step(name="API Request", type="run") as step:
-            step.input = {
-                "endpoint": api_url,
-                "research": settings.research,
-                "planning": settings.planning,
-                "web_search": settings.web_search,
-                "ytb_search": settings.ytb_search,
-                "mcp_server": settings.mcp_server,
-                "ai_search": settings.ai_search,
-                "multi_agent_type": settings.multi_agent_type,
-                "search_engine": settings.search_engine,
-                "verbose": settings.verbose,
-                "locale": settings.language,
-            }
+    # ✅ 백오프 재시도 설정
+    max_retries = 3
+    retry_delays = [1, 2, 4]
+    
+    aiohttp_session = None
+    keepalive_task = None
+    stop_event = asyncio.Event()
+    failed_keepalive_count = 0
+    
+    # Helper function to clean text content
+    def clean_response_text(text: str) -> str:
+        cleaned_text = text.replace("~~", "==")
+        return cleaned_text
+    
+    # ✅ 개선된 Keepalive sender
+    async def keepalive_sender():
+        """Monitor SSE activity instead of probing WebSocket"""
+        nonlocal last_activity
+        try:
+            while not stop_event.is_set():
+                await asyncio.sleep(30)
+                if not stop_event.is_set():
+                    current_time = asyncio.get_event_loop().time()
+                    idle_time = current_time - last_activity
+                    
+                    # ✅ SSE 데이터가 60초 이상 안 오면 warning만 (중단 안 함)
+                    if idle_time > 60:
+                        logger.warning(f"⚠️ No SSE data for {idle_time:.0f} seconds")
+                    else:
+                        logger.debug(f"✅ SSE active (last data {idle_time:.0f}s ago)")
+        except asyncio.CancelledError:
+            logger.debug("Keepalive sender cancelled")
+    
+    retry_count = 0
+    last_error = None
+    
+    while retry_count <= max_retries:
+        try:
+            # ✅ aiohttp ClientSession 생성
+            aiohttp_session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=aiohttp.TCPConnector(
+                    limit=100,
+                    limit_per_host=30,
+                    ttl_dns_cache=300,
+                    keepalive_timeout=300  # ✅ 5분으로 증가
+                )
+            )
             
-            logger.info(f"🚀 Starting httpx stream request to {api_url}")
+            # ✅ Start keepalive task
+            keepalive_task = asyncio.create_task(keepalive_sender())
             
-            # ✅ httpx stream context manager
-            async with httpx_client.stream(
-                "POST",
-                api_url,
+            logger.info(f"🌐 Connecting to API (attempt {retry_count + 1}/{max_retries + 1})")
+            
+            # ✅ POST request with streaming
+            async with aiohttp_session.post(
+                SK_API_URL,
                 json=payload,
-                headers={"Accept": "text/event-stream"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                    "Connection": "keep-alive",
+                    "Cache-Control": "no-cache"
+                }
             ) as response:
                 
-                step.output = f"Response status: {response.status_code}"
-                logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'unknown')}")
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"API returned status {response.status}: {error_text}")
                 
-                if response.status_code == 200:
-                    content_type = response.headers.get('content-type', '')
+                logger.info(f"✅ Connected to API - Status: {response.status}")
+                
+                # Check content type
+                content_type = response.headers.get('content-type', '')
+                
+                if 'text/event-stream' in content_type:
+                    # ✅ Process SSE with tool calling steps
+                    accumulated_content = ""
+                    current_tool_step = None
+                    tool_steps = {}
+                    last_activity = asyncio.get_event_loop().time()
+                    last_keepalive_log = asyncio.get_event_loop().time()
+                    chunk_count = 0
                     
-                    if 'text/event-stream' in content_type:
-                        # Process Server-Sent Events (SSE) with tool calling steps
-                        async with cl.Step(name="Processing Response", type="tool") as process_step:
-                            process_step.input = "Processing streaming response..."
+                    # ✅ Buffer for incomplete lines
+                    buffer = ""
+                    
+                    logger.info("Starting SSE processing loop with aiohttp...")
+                    
+                    # ✅ Process SSE stream chunk by chunk and parse lines
+                    async for chunk in response.content.iter_any():
+                        # ✅ 연결 끊김 체크
+                        if stop_event.is_set():
+                            logger.warning("⚠️ Connection lost - stopping stream processing")
+                            break
+                        
+                        # 주기적 로깅
+                        current_time = asyncio.get_event_loop().time()
+                        if current_time - last_keepalive_log > 20:
+                            logger.info(f"💓 SSE connection alive (aiohttp stream active)")
+                            last_keepalive_log = current_time
+                        
+                        # Stall 감지 
+                        if current_time - last_activity > 600:  # ✅ 600초 = 10분
+                            logger.warning("⚠️ No SSE data for 10 minutes, possible stall")
+                            break
+                        
+                        last_activity = current_time
+                        chunk_count += 1
+                        
+                        try:
+                            chunk_text = chunk.decode('utf-8')
+                        except UnicodeDecodeError:
+                            logger.warning("⚠️ Failed to decode chunk - skipping")
+                            continue
+                        
+                        # Add to buffer
+                        buffer += chunk_text
+                        
+                        # Process complete lines
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            line = line.strip()
                             
-                            accumulated_content = ""
-                            current_tool_step = None
-                            tool_steps = {}
-                            last_activity = asyncio.get_event_loop().time()
-                            last_keepalive_log = asyncio.get_event_loop().time()
+                            if not line:
+                                continue
                             
-                            logger.info("Starting SSE processing loop with httpx...")
+                            logger.debug(f"SSE line received: {line[:100]}...")
                             
-                            # ✅ httpx의 async iteration (자동 디코딩, 더 안정적)
-                            async for line in response.aiter_lines():
-                                # 주기적 로깅
-                                current_time = asyncio.get_event_loop().time()
-                                if current_time - last_keepalive_log > 20:
-                                    logger.info(f"💓 SSE connection alive (httpx stream active)")
-                                    last_keepalive_log = current_time
+                            # ✅ Handle SSE comments (keepalive from backend)
+                            if line.startswith(':'):
+                                logger.debug(f"SSE comment received: {line}")
+                                continue
+                            
+                            # Handle SSE format (data: prefix)
+                            if line.startswith('data: '):
+                                line = line[6:].strip()
                                 
-                                # Stall 감지 (5분)
-                                if current_time - last_activity > 300:
-                                    logger.warning("⚠️ No SSE data for 5 minutes, possible stall")
+                                # Check for stream end marker
+                                if line == "[DONE]":
+                                    logger.info("✅ Stream completed successfully")
                                     break
                                 
-                                if not line:
-                                    continue
-                                
-                                last_activity = current_time
-                                
-                                # ✅ line은 이미 디코딩되어 있음 (httpx가 자동 처리)
-                                logger.debug(f"SSE line received: {line[:100]}...")
-                                
-                                # Skip SSE comments and empty lines
-                                if line.startswith(':') or not line.strip():
-                                    continue
-                                
-                                # Handle SSE format (data: prefix)
-                                if line.startswith('data: '):
-                                    line = line[6:].strip()
+                                # ✅ Status message handling - create tool steps
+                                if line.startswith('### '):
+                                    step_content = line[4:]
                                     
-                                    # Status message handling - create tool steps
-                                    if line.startswith('### '):
-                                        step_content = line[4:]
-                                        
-                                        # Complete previous step
-                                        if current_tool_step:
-                                            current_tool_step.output = "✅ Completed"
-                                            await safe_send_step(current_tool_step)
-                                        
-                                        # Decode step content
-                                        step_name, code_content, description = decode_step_content(
-                                            step_content, step_name_manager
-                                        )
-                                        
-                                        # Create new step
-                                        step_type = "tool"
-                                        step_icon = "🔧"
-                                        
-                                        original_name_lower = step_content.lower()
-                                        logger.info(f"Creating tool step: {step_name}")
-                                        
-                                        try:
-                                            if original_name_lower.startswith(ui_text.get("analyzing", "").lower()):
-                                                step_type = "intent"
-                                                step_icon = "🧠"
-                                            elif original_name_lower.startswith(ui_text.get("analyze_complete", "").lower()):
-                                                step_type = "intent"
-                                                step_icon = "🧠"
-                                            elif original_name_lower.startswith(ui_text.get("task_planning", "").lower()):
-                                                step_type = "planning"
-                                                step_icon = "📋"
-                                            elif original_name_lower.startswith(ui_text.get("plan_done", "").lower()):
-                                                step_type = "planning"
-                                                step_icon = "📋"
-                                            elif original_name_lower.startswith(ui_text.get("searching", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🌐"
-                                            elif original_name_lower.startswith(ui_text.get("search_done", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🌐"
-                                            elif original_name_lower.startswith(ui_text.get("searching_YouTube", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🎬"
-                                            elif original_name_lower.startswith(ui_text.get("YouTube_done", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🎬"
-                                            elif original_name_lower.startswith(ui_text.get("searching_ai_search", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🏁"
-                                            elif original_name_lower.startswith(ui_text.get("ai_search_context_done", "").lower()):
-                                                step_type = "retrieval"
-                                                step_icon = "🏁"
-                                            elif original_name_lower.startswith(ui_text.get("answering", "").lower()):
-                                                step_type = "llm"
-                                                step_icon = "👨‍💻"
-                                            elif original_name_lower.startswith(ui_text.get("start_research", "").lower()):
-                                                step_type = "research"
-                                                step_icon = "✏️"
-                                            elif original_name_lower.startswith(ui_text.get("organize_research", "").lower()):
-                                                step_type = "research"
-                                                step_icon = "✏️"
-                                            elif original_name_lower.startswith(ui_text.get("write_research", "").lower()):
-                                                step_type = "research"
-                                                step_icon = "✏️"
-                                            elif original_name_lower.startswith(ui_text.get("review_research", "").lower()):
-                                                step_type = "research"
-                                                step_icon = "✏️"
-                                            elif "context information" in original_name_lower:
-                                                step_type = "tool"
-                                                step_icon = "📃"
-                                        except KeyError as e:
-                                            logger.warning(f"Missing UI text key: {e}")
-                                        
-                                        current_tool_step = cl.Step(
-                                            name=f"{step_icon} {step_name}",
-                                            type=step_type
-                                        )
-                                        
-                                        # Set input
-                                        if code_content:
-                                            current_tool_step.input = f"```python\n{code_content}\n```"
-                                        elif description:
-                                            current_tool_step.input = description
-                                        else:
-                                            current_tool_step.input = f"Executing: {step_name}"
-                                        
-                                        if not await safe_send_step(current_tool_step):
-                                            logger.warning(f"Failed to send tool step: {step_name}")
-                                            break
-                                        
-                                        tool_steps[step_name] = current_tool_step
+                                    # Complete previous step
+                                    if current_tool_step:
+                                        current_tool_step.output = "✅ Completed"
+                                        await safe_send_step(current_tool_step)
                                     
+                                    # Decode step content
+                                    step_name, code_content, description = decode_step_content(
+                                        step_content, step_name_manager
+                                    )
+                                    
+                                    # ✅ Determine step type and icon
+                                    step_type = "tool"
+                                    step_icon = "🔧"
+                                    
+                                    original_name_lower = step_content.lower()
+                                    logger.info(f"Creating tool step: {step_name}")
+                                    
+                                    try:
+                                        if original_name_lower.startswith(ui_text.get("analyzing", "").lower()):
+                                            step_type = "intent"
+                                            step_icon = "🧠"
+                                        elif original_name_lower.startswith(ui_text.get("analyze_complete", "").lower()):
+                                            step_type = "intent"
+                                            step_icon = "🧠"
+                                        elif original_name_lower.startswith(ui_text.get("task_planning", "").lower()):
+                                            step_type = "planning"
+                                            step_icon = "📋"
+                                        elif original_name_lower.startswith(ui_text.get("plan_done", "").lower()):
+                                            step_type = "planning"
+                                            step_icon = "📋"
+                                        elif original_name_lower.startswith(ui_text.get("searching", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🌐"
+                                        elif original_name_lower.startswith(ui_text.get("search_done", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🌐"
+                                        elif original_name_lower.startswith(ui_text.get("searching_YouTube", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🎬"
+                                        elif original_name_lower.startswith(ui_text.get("YouTube_done", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🎬"
+                                        elif original_name_lower.startswith(ui_text.get("searching_ai_search", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🏁"
+                                        elif original_name_lower.startswith(ui_text.get("ai_search_context_done", "").lower()):
+                                            step_type = "retrieval"
+                                            step_icon = "🏁"
+                                        elif original_name_lower.startswith(ui_text.get("answering", "").lower()):
+                                            step_type = "llm"
+                                            step_icon = "👨‍💻"
+                                        elif original_name_lower.startswith(ui_text.get("start_research", "").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif original_name_lower.startswith(ui_text.get("organize_research", "").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif original_name_lower.startswith(ui_text.get("write_research", "").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif original_name_lower.startswith(ui_text.get("review_research", "").lower()):
+                                            step_type = "research"
+                                            step_icon = "✏️"
+                                        elif "context information" in original_name_lower:
+                                            step_type = "tool"
+                                            step_icon = "📃"
+                                    except KeyError as e:
+                                        logger.warning(f"Missing UI text key: {e}")
+                                    
+                                    # ✅ Create new step with icon
+                                    current_tool_step = cl.Step(
+                                        name=f"{step_icon} {step_name}",
+                                        type=step_type
+                                    )
+                                    
+                                    # Set input
+                                    if code_content:
+                                        current_tool_step.input = f"```python\n{code_content}\n```"
+                                    elif description:
+                                        current_tool_step.input = description
                                     else:
-                                        # Regular content
-                                        cleaned_line = clean_response_text(line)
-                                        
-                                        if accumulated_content:
-                                            if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or \
-                                               accumulated_content.endswith(('.', '!', '?', ':')):
-                                                accumulated_content += "\n\n" + cleaned_line
-                                            else:
-                                                accumulated_content += "\n" + cleaned_line
-                                        else:
-                                            accumulated_content = cleaned_line
-                                        
-                                        # Stream to UI
-                                        if not await safe_stream_token(msg, cleaned_line + "\n"):
-                                            logger.warning("Stream connection lost")
-                                            break
+                                        current_tool_step.input = f"Executing: {step_name}"
+                                    
+                                    if not await safe_send_step(current_tool_step):
+                                        logger.warning(f"Failed to send tool step: {step_name}")
+                                        break
+                                    
+                                    tool_steps[step_name] = current_tool_step
                                 
                                 else:
-                                    # Regular content without 'data:' prefix
+                                    # ✅ Regular content
                                     cleaned_line = clean_response_text(line)
                                     
                                     if accumulated_content:
@@ -945,82 +991,117 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                                     else:
                                         accumulated_content = cleaned_line
                                     
+                                    # Stream to UI
                                     if not await safe_stream_token(msg, cleaned_line + "\n"):
                                         logger.warning("Stream connection lost")
                                         break
                             
-                            # Close remaining step
-                            if current_tool_step:
-                                current_tool_step.output = "✅ Completed"
-                                await safe_send_step(current_tool_step)
-                            
-                            process_step.output = f"✅ Processed {len(accumulated_content)} characters across {len(tool_steps)} tool steps"
-                    
-                    else:
-                        # Handle non-streaming response
-                        async with cl.Step(name="Processing Non-Streaming Response", type="tool") as process_step:
-                            logger.info("Not a streaming response, reading full content")
-                            try:
-                                # ✅ httpx로 전체 컨텐츠 읽기
-                                response_text = await response.aread()
-                                response_text = response_text.decode('utf-8', errors='replace')
-                                cleaned_response = clean_response_text(response_text)
+                            else:
+                                # ✅ Regular content without 'data:' prefix
+                                cleaned_line = clean_response_text(line)
                                 
-                                # Try JSON parse
-                                try:
-                                    response_data = json.loads(response_text)
-                                    if isinstance(response_data, dict) and "content" in response_data:
-                                        cleaned_content = clean_response_text(response_data["content"])
-                                        await safe_stream_token(msg, cleaned_content)
-                                        process_step.output = f"✅ Parsed JSON with content"
+                                if accumulated_content:
+                                    if cleaned_line.startswith(('•', '-', '#', '1.', '2.', '3.')) or \
+                                       accumulated_content.endswith(('.', '!', '?', ':')):
+                                        accumulated_content += "\n\n" + cleaned_line
                                     else:
-                                        await safe_stream_token(msg, cleaned_response)
-                                        process_step.output = "✅ JSON without content field"
-                                except json.JSONDecodeError:
-                                    await safe_stream_token(msg, cleaned_response)
-                                    process_step.output = "✅ Not JSON, used raw text"
+                                        accumulated_content += "\n" + cleaned_line
+                                else:
+                                    accumulated_content = cleaned_line
                                 
-                            except Exception as e:
-                                error_msg = f"Error processing response: {str(e)}"
-                                await safe_stream_token(msg, error_msg)
-                                process_step.output = error_msg
+                                if not await safe_stream_token(msg, cleaned_line + "\n"):
+                                    logger.warning("Stream connection lost")
+                                    break
+                    
+                    # ✅ Close remaining step
+                    if current_tool_step:
+                        current_tool_step.output = "✅ Completed"
+                        await safe_send_step(current_tool_step)
+                    
+                    logger.info(f"✅ Stream processed successfully - {chunk_count} chunks, {len(tool_steps)} tool steps")
+                
                 else:
-                    # ✅ httpx로 에러 응답 읽기
-                    error_text = await response.aread()
-                    error_msg = f"Error: {response.status_code} - {error_text.decode('utf-8', errors='replace')}"
-                    await safe_stream_token(msg, error_msg)
-                    step.output = error_msg
-    
-    except httpx.TimeoutException as e:
-        await handle_error_response(msg, "Request timeout", str(e))
-        logger.error(f"httpx timeout: {e}")
-    except httpx.NetworkError as e:
-        await handle_error_response(msg, "Network error", str(e))
-        logger.error(f"httpx network error: {e}")
-    except httpx.HTTPError as e:
-        await handle_error_response(msg, "HTTP error", str(e))
-        logger.error(f"httpx HTTP error: {e}")
-    except Exception as e:
-        await handle_error_response(msg, "Unexpected error", str(e))
-        logger.error(f"Unexpected error in stream_chat_with_api: {type(e).__name__}: {str(e)}")
-    
-    finally:
-        # ✅ httpx client 정리
-        if httpx_client:
-            try:
-                await httpx_client.aclose()
-                logger.info("🔌 httpx client closed successfully")
-            except Exception as e:
-                logger.error(f"❌ Error closing httpx client: {e}")
+                    # ✅ Handle non-streaming response
+                    logger.info("Not a streaming response, reading full content")
+                    try:
+                        response_text = await response.text()
+                        cleaned_response = clean_response_text(response_text)
+                        
+                        # Try JSON parse
+                        try:
+                            response_data = json.loads(response_text)
+                            if isinstance(response_data, dict) and "content" in response_data:
+                                cleaned_content = clean_response_text(response_data["content"])
+                                await safe_stream_token(msg, cleaned_content)
+                            else:
+                                await safe_stream_token(msg, cleaned_response)
+                        except json.JSONDecodeError:
+                            await safe_stream_token(msg, cleaned_response)
+                    except Exception as e:
+                        error_msg = f"Error processing response: {str(e)}"
+                        await safe_stream_token(msg, error_msg)
+                        logger.error(error_msg)
+                
+                # ✅ 성공 - 루프 탈출
+                break  # 성공 시 재시도 루프 종료
         
-        # Clean up
-        try:
-            await asyncio.sleep(0.3)
-            logger.info("Step cleanup completed successfully")
-        except Exception as cleanup_error:
-            logger.error(f"Error during step cleanup: {cleanup_error}")
+        except aiohttp.ClientError as e:
+            last_error = e
+            logger.error(f"❌ aiohttp client error (attempt {retry_count + 1}): {e}")
+            
+            if retry_count < max_retries:
+                delay = retry_delays[retry_count]
+                logger.info(f"🔄 Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+                retry_count += 1
+            else:
+                await handle_error_response(msg, "Connection Error", 
+                    f"Failed to connect to API after {max_retries + 1} attempts: {str(e)}")
+                break
+        
+        except asyncio.TimeoutError as e:
+            last_error = e
+            logger.error(f"❌ Timeout error (attempt {retry_count + 1}): {e}")
+            
+            if retry_count < max_retries:
+                delay = retry_delays[retry_count]
+                logger.info(f"🔄 Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+                retry_count += 1
+            else:
+                await handle_error_response(msg, "Timeout Error", 
+                    f"Request timed out after {max_retries + 1} attempts")
+                break
+        
+        except Exception as e:
+            last_error = e
+            logger.error(f"❌ Unexpected error (attempt {retry_count + 1}): {e}")
+            
+            if retry_count < max_retries:
+                delay = retry_delays[retry_count]
+                logger.info(f"🔄 Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+                retry_count += 1
+            else:
+                await handle_error_response(msg, "Processing Error", str(e))
+                break
+        
+        finally:
+            # ✅ Cleanup for this attempt
+            if keepalive_task and not keepalive_task.done():
+                stop_event.set()
+                try:
+                    keepalive_task.cancel()
+                    await asyncio.wait_for(keepalive_task, timeout=2.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+            
+            if aiohttp_session and not aiohttp_session.closed:
+                await aiohttp_session.close()
+                # ✅ Give time for proper cleanup
+                await asyncio.sleep(0.25)
     
-    # Finalize
+    # ✅ Final message update
     await safe_update_message(msg)
     logger.info("Streaming completed")
 
@@ -1037,6 +1118,10 @@ async def main(message: cl.Message):
     if not settings:
         settings = ChatSettings()
         cl.user_session.set("settings", settings)
+    
+    # 🔧 FIX: Update settings.language with current chat profile language
+    settings.language = language
+    cl.user_session.set("settings", settings)
     
     # ✨ 최우선: 빈 메시지 체크 (스타터 클릭으로 인한 빈 메시지 필터링)
     if not message.content or message.content.strip() == "":
@@ -1136,10 +1221,7 @@ async def on_show_starters_action(action: cl.Action):
 @cl.action_callback("starter_1")
 @cl.action_callback("starter_2")
 async def on_starter_action(action: cl.Action):
-    """통합 스타터 액션 핸들러 - 모든 스타터를 처리
-    
-    이제 starter_0~2 모두 이 하나의 핸들러로 처리됩니다.
-    StarterConfig를 통해 각 스타터의 동작이 결정됩니다.
+    """Unified Starter Action Handler - Handles All Starters
     """
     # Payload에서 정보 추출
     language = get_chat_profile_language()

@@ -361,7 +361,6 @@ async def plan_search_endpoint(
     """
     try:
         # Select orchestrator based on multi_agent_type prefix
-        # Check if it starts with "MS Agent Framework" for AFW, otherwise use SK
         multi_agent_type = request.multi_agent_type or "afw_group_chat"
         print(f"multi_agent_type: {multi_agent_type}")
         if multi_agent_type.startswith("MS Agent Framework"):
@@ -372,6 +371,7 @@ async def plan_search_endpoint(
             plan_search_executor = get_orchestrator_sk()
         
         if request.stream:
+            # ✅ SSE 스트리밍 응답 최적화
             return StreamingResponse(
                 plan_search_executor.generate_response(
                     request.messages,
@@ -389,11 +389,17 @@ async def plan_search_endpoint(
                     include_ai_search=request.include_ai_search,
                     multi_agent_type=request.multi_agent_type,
                     verbose=request.verbose,
-                    
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # Nginx 버퍼링 비활성화
+                    "Transfer-Encoding": "chunked"
+                }
             )
         
+        # Non-streaming response
         response_generator = plan_search_executor.generate_response(
             request.messages,
             request.max_tokens,
@@ -418,10 +424,10 @@ async def plan_search_endpoint(
             success=True
         )
     except Exception as e:
-        logger.error(f"Error processing risk search request: {str(e)}")
+        logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate risk analysis response: {str(e)}"
+            detail=f"Failed to generate response: {str(e)}"
         )
 
 @app.exception_handler(Exception)

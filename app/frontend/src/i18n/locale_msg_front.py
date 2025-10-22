@@ -157,7 +157,7 @@ EXAMPLE_PROMPTS = {
             and must adhere to these guidelines:
             [Writing Guidelines]
             Use only the information provided in the given Context. Do not include any external knowledge or prior assumptions.
-            The total length should be at least 5,000 characters, with content that is dense, refined, and free of redundancy or unnecessary elaboration.
+            The total length should be at least 10,000 characters, with content that is dense, refined, and free of redundancy or unnecessary elaboration.
             Ensure the writing is well-structured, analytical, and professional in tone.
             """
         },
@@ -192,7 +192,8 @@ EXAMPLE_PROMPTS = {
             이 분석은 투자자와 경영진을 위한 문서로 활용되며, 다음 작성 지침을 반드시 준수해야 합니다.
             [작성 지침]
             제공된 Context 정보만 활용하며, 외부 지식이나 사전 정보는 절대 포함하지 마십시오.
-            전체 분량은 5,000자 이상을 기준으로 하며, 반복적이거나 불필요하게 장황한 표현은 배제하고 정제된 밀도 높은 문장으로 구성하십시오.
+            전체 분량은 10,000자 이상을 기준으로 하며, 반복적이거나 불필요하게 장황한 표현은 배제하고 정제된 밀도 높은 문장으로 구성하십시오.
+            분석결과를 증명할 수 있는 근거와 데이터를 포함하십시오. Context에 포함된 표, 통계, 사례 등을 적극 활용하여 주장의 신뢰성을 높이십시오.
             글은 체계적이고 분석적이며, 전문적인 톤으로 작성하십시오.
             """
         },

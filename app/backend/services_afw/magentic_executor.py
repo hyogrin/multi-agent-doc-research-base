@@ -428,6 +428,24 @@ class MagenticExecutor(Executor):
                             "role": event.message.role.value if hasattr(event.message, 'role') else "unknown",
                             "text": agent_text
                         })
+
+                        # Use Reviewer output if available
+                        if "reviewer" in event.agent_id.lower() and agent_text:
+                            logger.info(f"[MagenticExecutor] Reviewer agent completed, parsing output...")
+                            
+                            cleaned_json = clean_and_validate_json(agent_text)
+                            reviewer_output = json.loads(cleaned_json)
+                            
+                            final_answer = reviewer_output.get("revised_answer_markdown", "")
+                            citations = reviewer_output.get("citations", [])
+                            reviewer_score = reviewer_output.get("reviewer_evaluation_score", "N/A")
+                            ready_to_publish = reviewer_output.get("ready_to_publish", False)
+                            
+                            logger.info(
+                                f"[MagenticExecutor] Parsed Reviewer output: "
+                                f"answer_len={len(final_answer)}, score={reviewer_score}, ready={ready_to_publish}"
+                            )
+                            
                         
                         # # ✅ Always show completion checkmark
                         if VERBOSE_MODE:
@@ -458,14 +476,23 @@ class MagenticExecutor(Executor):
                                 parsed_answer = json.loads(final_answer_cleaned)
                                 
                                 # ✅ Prefer Reviewer output over Writer output
+                                
                                 answer_markdown = (
                                     parsed_answer.get("revised_answer_markdown", "") or 
                                     parsed_answer.get("draft_answer_markdown", "") or
+                                    parsed_answer.get("final_answer_markdown", "") or
+                                    parsed_answer.get("answer_markdown", "") or
                                     parsed_answer.get("final_answer", "") or
                                     parsed_answer.get("answer", "")
                                 )
+                                if answer_markdown:
+                                    final_answer = answer_markdown
                                 
-                                citations = parsed_answer.get("citations", [])
+                                if reviewer_score == "N/A":
+                                    reviewer_score = parsed_answer.get("reviewer_evaluation_score", "N/A")
+                                
+                                if not citations:
+                                    citations = parsed_answer.get("citations", [])
                                 key_findings = parsed_answer.get("key_findings", [])
                                 reviewer_score = parsed_answer.get("reviewer_evaluation_score", "N/A")
                                 ready_to_publish = parsed_answer.get("ready_to_publish", False)
@@ -512,7 +539,7 @@ class MagenticExecutor(Executor):
                 .on_exception(on_exception)
                 .with_standard_manager(
                     chat_client=self.chat_client,
-                    max_round_count=7,
+                    max_round_count=6,
                     max_stall_count=2,
                     max_reset_count=1
                 )
@@ -541,7 +568,7 @@ class MagenticExecutor(Executor):
 ## Phase 2: ResearchWriter
 - Use analyst's findings to create comprehensive answer
 - Structure content with clear markdown formatting
-- Include proper citations with URLs from sources
+- Include proper citations with URLs/file names from sources
 - Output: JSON with draft_answer_markdown, citations, key_findings
 
 ## Phase 3: ResearchReviewer
@@ -565,6 +592,7 @@ class MagenticExecutor(Executor):
 - No trailing commas in arrays or objects
 - Escape special characters properly in strings
 - Base all claims on provided contexts only
+- Final answer output must be JSON with final_answer_markdown, citations, reviewer_evaluation_score, ready_to_publish fields
 """
                 
             logger.info(f"[MagenticExecutor] Starting Magentic orchestration for '{sub_topic}'")
