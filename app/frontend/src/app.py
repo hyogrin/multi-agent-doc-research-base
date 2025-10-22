@@ -727,58 +727,57 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
     # Prepare the API payload
     payload = create_api_payload(settings)
     
-    # Debug logging (생략)
-    
     # Create message for streaming response
     ui_text = UI_TEXT[settings.language]
     msg = cl.Message(content="")
     await msg.send()
     
-    # ✅ aiohttp 설정: 장시간 연결 유지에 최적화
+    # ✅ aiohttp 설정: 장시간 연결 유지에 최적화 (10분으로 증가)
     timeout = aiohttp.ClientTimeout(
         total=None,              # 무제한 (multi-agent는 예측 불가)
         connect=10,              # 연결 시작 10초
         sock_connect=10,         # 소켓 연결 10초
-        sock_read=300            # ✅ 소켓 읽기 300초 (5분)
+        sock_read=600            # ✅ 소켓 읽기 600초 (10분) - Magentic 처리 시간 고려
     )
     
     # ✅ 백오프 재시도 설정
     max_retries = 3
     retry_delays = [1, 2, 4]
     
-    aiohttp_session = None
-    keepalive_task = None
-    stop_event = asyncio.Event()
-    failed_keepalive_count = 0
-    
     # Helper function to clean text content
     def clean_response_text(text: str) -> str:
         cleaned_text = text.replace("~~", "==")
         return cleaned_text
     
-    # ✅ 개선된 Keepalive sender
-    async def keepalive_sender():
-        """Monitor SSE activity instead of probing WebSocket"""
-        nonlocal last_activity
-        try:
-            while not stop_event.is_set():
-                await asyncio.sleep(30)
-                if not stop_event.is_set():
-                    current_time = asyncio.get_event_loop().time()
-                    idle_time = current_time - last_activity
-                    
-                    # ✅ SSE 데이터가 60초 이상 안 오면 warning만 (중단 안 함)
-                    if idle_time > 60:
-                        logger.warning(f"⚠️ No SSE data for {idle_time:.0f} seconds")
-                    else:
-                        logger.debug(f"✅ SSE active (last data {idle_time:.0f}s ago)")
-        except asyncio.CancelledError:
-            logger.debug("Keepalive sender cancelled")
-    
     retry_count = 0
     last_error = None
     
     while retry_count <= max_retries:
+        # ✅ 재시도마다 새로운 stop_event 생성 (핵심 수정!)
+        aiohttp_session = None
+        keepalive_task = None
+        stop_event = asyncio.Event()  # 매 재시도마다 새로 생성
+        last_activity = None  # 초기화
+        
+        # ✅ 개선된 Keepalive sender
+        async def keepalive_sender():
+            """Monitor SSE activity instead of probing WebSocket"""
+            nonlocal last_activity
+            try:
+                while not stop_event.is_set():
+                    await asyncio.sleep(30)
+                    if not stop_event.is_set() and last_activity:
+                        current_time = asyncio.get_event_loop().time()
+                        idle_time = current_time - last_activity
+                        
+                        # ✅ SSE 데이터가 120초(2분) 이상 안 오면 warning (10분 대기)
+                        if idle_time > 120:
+                            logger.warning(f"⚠️ No SSE data for {idle_time:.0f} seconds (Magentic may be processing)")
+                        else:
+                            logger.debug(f"✅ SSE active (last data {idle_time:.0f}s ago)")
+            except asyncio.CancelledError:
+                logger.debug("Keepalive sender cancelled")
+        
         try:
             # ✅ aiohttp ClientSession 생성
             aiohttp_session = aiohttp.ClientSession(
@@ -787,7 +786,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                     limit=100,
                     limit_per_host=30,
                     ttl_dns_cache=300,
-                    keepalive_timeout=300  # ✅ 5분으로 증가
+                    keepalive_timeout=600  # ✅ 10분으로 증가
                 )
             )
             
@@ -835,19 +834,14 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                     async for chunk in response.content.iter_any():
                         # ✅ 연결 끊김 체크
                         if stop_event.is_set():
-                            logger.warning("⚠️ Connection lost - stopping stream processing")
+                            logger.warning("⚠️ Stop event triggered - stopping stream processing")
                             break
                         
                         # 주기적 로깅
                         current_time = asyncio.get_event_loop().time()
-                        if current_time - last_keepalive_log > 20:
-                            logger.info(f"💓 SSE connection alive (aiohttp stream active)")
+                        if current_time - last_keepalive_log > 30:  # 30초마다 로깅
+                            logger.info(f"💓 SSE connection alive (stream active, last data {current_time - last_activity:.0f}s ago)")
                             last_keepalive_log = current_time
-                        
-                        # Stall 감지 
-                        if current_time - last_activity > 600:  # ✅ 600초 = 10분
-                            logger.warning("⚠️ No SSE data for 10 minutes, possible stall")
-                            break
                         
                         last_activity = current_time
                         chunk_count += 1
@@ -873,7 +867,7 @@ async def stream_chat_with_api(message: str, settings: ChatSettings) -> None:
                             
                             # ✅ Handle SSE comments (keepalive from backend)
                             if line.startswith(':'):
-                                logger.debug(f"SSE comment received: {line}")
+                                logger.debug(f"SSE comment (backend keepalive): {line}")
                                 continue
                             
                             # Handle SSE format (data: prefix)
