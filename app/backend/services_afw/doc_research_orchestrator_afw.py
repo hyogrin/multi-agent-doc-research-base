@@ -811,8 +811,30 @@ class PlanSearchOrchestratorAFW:
                 # Stream workflow events
                 async for event in workflow.run_stream(workflow_input):
                     event_data = None
-                    if hasattr(event, "data"):
+                    if hasattr(event, "data"): 
                         event_data = event.data
+                    # ✅ 이제 event_data가 정의된 후에 체크
+                    if event_data and isinstance(event_data, dict):
+                        executor_error = event_data.get("executor_error")
+                        if executor_error and executor_error.get("is_fatal"):
+                            executor_name = executor_error.get("executor", "Unknown")
+                            error_type = executor_error.get("error_type", "unknown")
+                            error_message = executor_error.get("error_message", "Unknown error")
+
+                            logger.error(
+                                f"🔴 Fatal error from {executor_name} executor: {error_type}"
+                            )
+                            logger.error(f"   Error details: {error_message}")
+
+                            # ✅ 기존 progress message처럼 ### 포맷으로 전송 (frontend가 이미 처리 가능)
+                            yield f"data: ### ❌ {executor_name.upper()} 오류 발생\n\n"
+                            yield f"data: ### error type: {error_type}\n\n"
+                            yield f"data: ### {error_message[:300]}\n\n"
+                            yield f"data: ### Terminate the task\n\n"
+                            yield "data: [DONE]\n\n"
+
+                            logger.info(f"🛑 Workflow terminated due to fatal error from {executor_name}")
+                            return  # ✅ 워크플로우 즉시 종료
 
                     # Handle progress messages
                     if event_data and isinstance(event_data, dict):
@@ -890,7 +912,6 @@ class PlanSearchOrchestratorAFW:
                             f"⚠️ No final answer token detected - Total elapsed: {total_elapsed.total_seconds():.2f}s"
                         )
                         yield f"data: ### {elapsed_msg}: {total_elapsed.total_seconds():.2f}s\n\n"
-
             else:
                 # Non-streaming execution
                 events = await workflow.run(workflow_input)

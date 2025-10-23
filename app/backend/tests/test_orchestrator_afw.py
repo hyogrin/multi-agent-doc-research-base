@@ -16,7 +16,7 @@ sys.path.insert(0, str(backend_dir))
 
 from config.config import Settings
 from model.models import ChatMessage
-from app.backend.services_afw.plan_search_orchestrator_afw import (
+from app.backend.services_afw.doc_research_orchestrator_afw import (
     PlanSearchOrchestrator,
     IntentAnalyzerExecutor,
     TaskPlannerExecutor,
@@ -225,7 +225,7 @@ async def test_plan_search_executor_afw_comparison_with_sk(settings):
     """Compare AFW and SK implementations."""
     print("\n=== Comparing AFW vs SK ===")
     
-    from app.backend.services_sk.plan_search_orchestrator_sk import PlanSearchOrchestratorSK
+    from app.backend.services_sk.doc_research_orchestrator_sk import PlanSearchOrchestratorSK
     
     # Test messages
     messages = [

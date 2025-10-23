@@ -116,30 +116,18 @@ class AISearchExecutor(Executor):
     async def search_documents(
         self,
         search_data: Dict[str, Any],
-        ctx: WorkflowContext[Dict[str, Any], str],  # Added str for yield_output
+        ctx: WorkflowContext[Dict[str, Any], str],
     ) -> None:
-        """
-        Search documents in Azure AI Search for each sub-topic.
-
-        Args:
-            search_data: Dictionary with search parameters:
-                - sub_topics: List of sub-topics with queries
-                - search_type: "hybrid", "semantic", "vector", or "text"
-                - filters: Optional OData filter expression
-                - top_k: Number of results per query (default: 5)
-                - include_content: Include full content (default: True)
-                - document_type: Filter by document type
-                - industry: Filter by industry
-                - company: Filter by company
-                - report_year: Filter by report year
-            ctx: Workflow context for sending results
-        """
+        """Search documents in Azure AI Search for each sub-topic."""
         try:
             # Get metadata for verbose and locale
             metadata = search_data.get("metadata", {})
             locale = metadata.get("locale", "ko-KR")
             verbose = metadata.get("verbose", False)
             LOCALE_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
+
+            # ✅ Yield starting message
+            await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_ai_search']}\n\n")
 
             sub_topics = search_data.get("sub_topics", [])
             search_type = search_data.get("search_type", "hybrid")
@@ -150,9 +138,6 @@ class AISearchExecutor(Executor):
             industry = search_data.get("industry")
             company = search_data.get("company")
             report_year = search_data.get("report_year")
-
-            # ✅ Yield starting message
-            await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_ai_search']}\n\n")
 
             if not sub_topics:
                 sub_topics = [
@@ -180,29 +165,49 @@ class AISearchExecutor(Executor):
                         f"[AISearchExecutor] Searching for '{query}' in sub-topic '{sub_topic_name}'"
                     )
 
-                    # Generate query vector
-                    query_vector = self._generate_embedding(query)
+                    try:
+                        # Generate query vector
+                        query_vector = self._generate_embedding(query)
 
-                    # Build filter expression
-                    filter_expression = self._build_filters(
-                        filters, document_type, industry, company, report_year
-                    )
+                        # Build filter expression
+                        filter_expression = self._build_filters(
+                            filters, document_type, industry, company, report_year
+                        )
 
-                    # Execute search
-                    search_results = self._execute_search(
-                        query=query,
-                        query_vector=query_vector,
-                        search_type=search_type,
-                        filter_expression=filter_expression,
-                        top_k=top_k,
-                        include_content=include_content,
-                    )
+                        # Execute search
+                        search_results = self._execute_search(
+                            query=query,
+                            query_vector=query_vector,
+                            search_type=search_type,
+                            filter_expression=filter_expression,
+                            top_k=top_k,
+                            include_content=include_content,
+                        )
 
-                    # Process results
-                    documents = self._process_search_results(
-                        search_results, include_content
-                    )
-                    sub_topic_documents.extend(documents)
+                        # Process results
+                        documents = self._process_search_results(
+                            search_results, include_content
+                        )
+                        sub_topic_documents.extend(documents)
+
+                    except Exception as search_error:
+                        error_str = str(search_error)
+                        logger.error(f"[AISearchExecutor] AI Search failed: {error_str}")
+
+                        # ✅ 에러를 orchestrator로 전달
+                        await ctx.send_message(
+                            {
+                                **search_data,
+                                "sub_topic_ai_search_contexts": {},
+                                "executor_error": {
+                                    "executor": "ai_search",
+                                    "error_type": "search_api_failure",  # 더 명확한 타입
+                                    "error_message": error_str,
+                                    "is_fatal": True,
+                                },
+                            }
+                        )
+                        return  # ✅ 즉시 종료
 
                 if sub_topic_documents:
                     # Store results keyed by sub_topic name
@@ -240,13 +245,20 @@ class AISearchExecutor(Executor):
             )
 
         except Exception as e:
-            error_msg = f"AI Search failed: {str(e)}"
+            error_msg = f"AI Search fatal error: {str(e)}"
             logger.error(f"[AISearchExecutor] {error_msg}")
+
+            # ✅ 최상위 예외도 동일한 형식으로 전달
             await ctx.send_message(
                 {
                     **search_data,
                     "sub_topic_ai_search_contexts": {},
-                    "ai_search_error": error_msg,
+                    "executor_error": {
+                        "executor": "ai_search",
+                        "error_type": "fatal_exception",
+                        "error_message": str(e),
+                        "is_fatal": True,
+                    },
                 }
             )
 

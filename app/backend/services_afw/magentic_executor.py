@@ -101,7 +101,16 @@ class MagenticExecutor(Executor):
     ) -> None:
         """Run Magentic orchestration for each sub-topic with streaming progress."""
         try:
-            # Extract parameters (flexible fallback chain)
+            executor_error = research_data.get("executor_error")
+            if executor_error and executor_error.get("is_fatal"):
+                logger.error(
+                    f"[MagenticExecutor] Fatal error detected from upstream executor: {executor_error}"
+                )
+                
+                await ctx.yield_output(research_data)  
+                return
+            
+            # Extract parameters
             question = (
                 research_data.get("question")
                 or research_data.get("enriched_query")
@@ -130,6 +139,29 @@ class MagenticExecutor(Executor):
                     "[MagenticExecutor] No sub_topics provided, creating default"
                 )
                 sub_topics = [{"sub_topic": "research report", "queries": [question]}]
+
+            # ✅ Context 검증: AI Search가 필수인데 없으면 에러
+            has_ai_search_context = bool(research_data.get("sub_topic_ai_search_contexts"))
+            has_web_context = bool(research_data.get("sub_topic_web_contexts"))
+            has_youtube_context = bool(research_data.get("sub_topic_youtube_contexts"))
+            
+            # ✅ 최소 1개의 context source가 있어야 함
+            if not (has_ai_search_context or has_web_context or has_youtube_context):
+                error_msg = "No context available for research (AI Search, Web Search, and YouTube all failed or returned empty)"
+                logger.error(f"[MagenticExecutor] {error_msg}")
+                
+                await ctx.send_message(
+                    {
+                        **research_data,
+                        "executor_error": {
+                            "executor": "magentic_research",
+                            "error_type": "no_context_available",
+                            "error_message": error_msg,
+                            "is_fatal": True,
+                        },
+                    }
+                )
+                return
 
             # Yield starting message
             await ctx.yield_output(

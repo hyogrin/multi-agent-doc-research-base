@@ -110,20 +110,12 @@ class YouTubeMCPExecutor(Executor):
         return self.mcp_session is not None
 
     @handler
-    async def search_youtube(
+    async def search(
         self,
         search_data: Dict[str, Any],
-        ctx: WorkflowContext[Dict[str, Any], str],  # Added str for yield_output
+        ctx: WorkflowContext[Dict[str, Any], str],
     ) -> None:
-        """
-        Search YouTube videos using MCP server for each sub-topic.
-
-        Args:
-            search_data: Dictionary with search parameters:
-                - sub_topics: List of sub-topics with queries
-                - max_results: Maximum number of results per query (default: 10)
-            ctx: Workflow context for sending results
-        """
+        """YouTube search handler."""
         try:
             # Get metadata for verbose and locale
             metadata = search_data.get("metadata", {})
@@ -226,13 +218,19 @@ class YouTubeMCPExecutor(Executor):
             )
 
         except Exception as e:
-            error_msg = f"YouTube search failed: {str(e)}"
-            logger.error(f"[YouTubeMCPExecutor] {error_msg}")
+            error_str = str(e)
+            logger.error(f"[YouTubeExecutor] Search failed: {error_str}")
+
             await ctx.send_message(
                 {
                     **search_data,
                     "sub_topic_youtube_contexts": {},
-                    "youtube_error": error_msg,
+                    "executor_error": {
+                        "executor": "youtube_search",
+                        "error_type": "mcp_connection_failure",
+                        "error_message": error_str,
+                        "is_fatal": False,  # YouTube는 선택적이므로 치명적이지 않음
+                    },
                 }
             )
 

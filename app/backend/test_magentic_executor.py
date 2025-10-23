@@ -41,7 +41,7 @@ try:
     
     # Test 4: Import orchestrator with MagenticExecutor
     print("\n[Test 4] Importing PlanSearchOrchestratorAFW...")
-    from services_afw.plan_search_orchestrator_afw import PlanSearchOrchestratorAFW
+    from app.backend.services_afw.doc_research_orchestrator_afw import PlanSearchOrchestratorAFW
     print("✅ Orchestrator imported successfully with MagenticExecutor support")
     
     # Test 5: Check Magentic-related imports

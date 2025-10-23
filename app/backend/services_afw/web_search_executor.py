@@ -477,3 +477,109 @@ class WebSearchExecutor(Executor):
                     "search_error": str(e),
                 }
             )
+
+    @handler
+    async def search(
+        self,
+        search_data: Dict[str, Any],
+        ctx: WorkflowContext[Dict[str, Any], str],
+    ) -> None:
+        """Web search handler."""
+        try:
+            logger.info("WebSearchExecutor: Starting web search")
+
+            # Get metadata for verbose and locale
+            metadata = search_data.get("metadata", {})
+            locale = metadata.get("locale", "ko-KR")
+            verbose = metadata.get("verbose", False)
+            LOCALE_MSG = LOCALE_MESSAGES.get(locale, LOCALE_MESSAGES["ko-KR"])
+
+            # ✅ Yield starting message
+            await ctx.yield_output(f"data: ### {LOCALE_MSG['searching']}\n\n")
+
+            sub_topics = search_data.get("sub_topics", [])
+            max_results = search_data.get("max_results", 3)
+
+            if not sub_topics:
+                # No search needed
+                await ctx.send_message(
+                    {
+                        **search_data,
+                        "sub_topic_web_contexts": {},  # Changed from web_search_results
+                    }
+                )
+                return
+
+            # Search by sub-topic
+            sub_topic_results = {}
+
+            for sub_topic_data in sub_topics:
+                sub_topic_name = sub_topic_data.get("sub_topic", "research")
+                queries = sub_topic_data.get("queries", [])
+
+                sub_topic_search_results = []
+
+                for query in queries:
+                    logger.info(
+                        f"WebSearchExecutor: Searching for '{query}' in sub-topic '{sub_topic_name}'"
+                    )
+
+                    search_result_json = await self._search_helper.search_bing_api(
+                        query=query,
+                        locale=locale,
+                        max_results=max_results,
+                        max_context_length=3000,
+                    )
+
+                    search_result = json.loads(search_result_json)
+
+                    if search_result.get("results"):
+                        sub_topic_search_results.append(search_result)
+
+                if sub_topic_search_results:
+                    sub_topic_results[sub_topic_name] = sub_topic_search_results
+
+            logger.info(
+                f"WebSearchExecutor: Completed search for {len(sub_topic_results)} sub-topics"
+            )
+
+            if verbose and sub_topic_results:
+                results_str = json.dumps(
+                    sub_topic_results, ensure_ascii=False, indent=2
+                )
+                truncated = (
+                    results_str[:200] + "... [truncated for display]"
+                    if len(results_str) > 200
+                    else results_str
+                )
+                await ctx.yield_output(
+                    f"data: {send_step_with_code(LOCALE_MSG['search_done'], truncated)}\n\n"
+                )
+            else:
+                await ctx.yield_output(f"data: ### {LOCALE_MSG['search_done']}\n\n")
+
+            # Add search results to search_data (using SK-compatible key name)
+            await ctx.send_message(
+                {
+                    **search_data,
+                    "sub_topic_web_contexts": sub_topic_results,  # Changed from web_search_results
+                }
+            )
+
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"[WebSearchExecutor] Search failed: {error_str}")
+
+            # ✅ 동일한 형식으로 에러 전달
+            await ctx.send_message(
+                {
+                    **search_data,
+                    "sub_topic_web_contexts": {},
+                    "executor_error": {
+                        "executor": "web_search",
+                        "error_type": "api_failure",
+                        "error_message": error_str,
+                        "is_fatal": False,  # 또는 False (치명적이지 않을 수도)
+                    },
+                }
+            )

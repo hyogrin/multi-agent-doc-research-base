@@ -112,6 +112,16 @@ class GroupChattingExecutor(Executor):
     ) -> None:
         """Run group chat for each sub-topic with streaming progress."""
         try:
+            # ✅ 먼저 executor_error 체크 (MagenticExecutor와 동일)
+            executor_error = research_data.get("executor_error")
+            if executor_error and executor_error.get("is_fatal"):
+                logger.error(
+                    f"[GroupChattingExecutor] Fatal error detected from upstream executor: {executor_error}"
+                )
+                # ✅ Yield error dict to orchestrator
+                await ctx.yield_output(research_data)
+                return
+            
             # Extract parameters (flexible fallback chain)
             question = (
                 research_data.get("question")
