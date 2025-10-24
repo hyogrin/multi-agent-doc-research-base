@@ -305,7 +305,7 @@ class AISearchPlugin:
                 search_text=query,
                 vector_queries=vector_queries,
                 filter=filter_expression,
-                query_type=QueryType.SIMPLE,
+                query_type=QueryType.FULL,
                 semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
                 query_answer=QueryAnswerType.EXTRACTIVE,
@@ -368,9 +368,9 @@ class AISearchPlugin:
             # Add search metadata
             if hasattr(result, '@search.score'):
                 doc['search_score'] = result['@search.score']
-            if hasattr(result, '@search.reranker_score'):
+            if self.search_type=="semantic" and hasattr(result, '@search.reranker_score'):
                 doc['reranker_score'] = result['@search.reranker_score']
-            if hasattr(result, '@search.captions'):
+            if self.search_type=="semantic" and hasattr(result, '@search.captions'):
                 doc['captions'] = [caption.text for caption in result['@search.captions']]
             
             # Truncate content if needed for response size

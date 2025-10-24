@@ -331,7 +331,7 @@ class AISearchExecutor(Executor):
                 filter=filter_expression,
                 select=select_fields,
                 top=top_k,
-                query_type=QueryType.SIMPLE,
+                query_type=QueryType.FULL,
                 semantic_configuration_name="semantic-config",
             )
 
@@ -405,7 +405,7 @@ class AISearchExecutor(Executor):
                 doc["content"] = result.get("content")
 
             # Add semantic captions if available
-            if hasattr(result, "@search.captions"):
+            if self.search_type=="semantic" and hasattr(result, "@search.captions"):
                 doc["captions"] = [
                     {"text": caption.text, "highlights": caption.highlights}
                     for caption in result["@search.captions"]

@@ -32,14 +32,13 @@ template: |
 
   ----- Style Guide (for draft_answer_markdown) -----
   - Markdown allowed: headings (#), bold (**), bullet lists (-), tables (|).
-  - Tables: Use markdown table syntax when presenting structured data
-    Example:
-    | Column1 | Column2 |
-    |---------|---------|
-    | Data1   | Data2   |
-  - No code blocks, no inline HTML unless absolutely necessary.
-  - Include 1 emoji if natural (max 2).
-  - If a correction is needed, append a single line starting with "정정: ..."
+  - **Present data using tables**: When showing statistics, comparisons, or structured data, use markdown tables.
+  - Do NOT repeat table data as text outside the table
+  - Each data point should appear ONLY in the table OR in text, not both
+  - After presenting a table, add only a brief summary or interpretation, not row-by-row explanation
+  - Utilize tables, statistics, and case studies included in the context to enhance the credibility of your arguments.
+  - Put the data and evidence to support your analysis.
+  - If a correction is needed, append a single line starting with "correction: ..."
   - Provide clickable reference links based on the retrieved sources.
 
   ----- Contexts -----
