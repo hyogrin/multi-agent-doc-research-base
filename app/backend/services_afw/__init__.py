@@ -25,7 +25,7 @@ Usage:
     orchestrator = PlanSearchOrchestrator(settings)
 """
 
-from app.backend.services_afw.doc_research_orchestrator_afw import PlanSearchOrchestratorAFW
+from services_afw.doc_research_orchestrator_afw import PlanSearchOrchestratorAFW
 from services_afw.group_chatting_executor import GroupChattingExecutor
 from services_afw.ai_search_executor import AISearchExecutor
 from services_afw.grounding_executor import GroundingExecutor

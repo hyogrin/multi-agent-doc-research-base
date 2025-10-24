@@ -19,8 +19,8 @@ from typing import List, Dict, Optional
 from utils.enum import SearchEngine
 from config.config import Settings
 from model.models import ChatResponse, PlanSearchRequest, FileUploadResponse
-from app.backend.services_sk.doc_research_orchestrator_sk import PlanSearchOrchestratorSK
-from app.backend.services_afw.doc_research_orchestrator_afw import PlanSearchOrchestratorAFW
+from services_sk.doc_research_orchestrator_sk import PlanSearchOrchestratorSK
+from services_afw.doc_research_orchestrator_afw import PlanSearchOrchestratorAFW
 from services_sk.unified_file_upload_plugin import UnifiedFileUploadPlugin
 
 import logging
