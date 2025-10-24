@@ -486,10 +486,7 @@ class GroupChattingExecutor(Executor):
                     "revised_answer_markdown", ""
                 ) or parsed_answer.get("draft_answer_markdown", "")
 
-                answer_markdown = clean_duplicate_table_content(answer_markdown)
-
-
-
+                
                 # ✅ Extract citations
                 citations = parsed_answer.get("citations", [])
 

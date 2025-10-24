@@ -856,7 +856,6 @@ class PlanSearchOrchestratorSK:
                                             final_answer_data = json.loads(final_answer_json)
                                             # Extract answer_markdown (try revised first, then draft)
                                             answer_markdown = final_answer_data.get("revised_answer_markdown", "") or final_answer_data.get("draft_answer_markdown", "")
-                                            answer_markdown = clean_duplicate_table_content(answer_markdown)
                                             if stream and answer_markdown:
                                                 # Set TTFT
                                                 if 'ttft_time' not in locals():

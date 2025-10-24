@@ -631,9 +631,6 @@ class MagenticExecutor(Executor):
                                     or parsed_answer.get("answer", "")
                                 )
                                 if answer_markdown:
-                                    answer_markdown = clean_duplicate_table_content(
-                                        answer_markdown
-                                    )
                                     final_answer = answer_markdown
 
                                 if reviewer_score == "N/A":
