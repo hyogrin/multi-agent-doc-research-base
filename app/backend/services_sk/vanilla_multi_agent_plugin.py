@@ -80,6 +80,7 @@ class MultiAgentPlugin:
             api_version=settings.AZURE_OPENAI_API_VERSION,
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
         )
+        self.search_type = settings.AZURE_AI_SEARCH_SEARCH_TYPE or "hybrid"
         self.deployment_name = settings.AZURE_OPENAI_DEPLOYMENT_NAME
         self.default_max_tokens = settings.MAX_TOKENS
         self.context_max_chars = _safe_int(

@@ -69,7 +69,6 @@ class AISearchPlugin:
     def search_documents(
         self,
         query: str,
-        search_type: str = None,  # "hybrid", "semantic", "vector", "text"
         filters: Optional[str] = None,
         top_k: int = 5,
         include_content: bool = True,
@@ -104,12 +103,9 @@ class AISearchPlugin:
                 filters, document_type, industry, company, report_year
             )
 
-            if not search_type:
-                search_type = self.search_type
-
             # Configure search based on search type
             search_results = self._execute_search(
-                query, query_vector, search_type, filter_expression, top_k, include_content
+                query, query_vector, self.search_type, filter_expression, top_k, include_content
             )
             
             # Process results
@@ -121,7 +117,7 @@ class AISearchPlugin:
             return {
                 "status": "success",
                 "query": query,
-                "search_type": search_type,
+                "search_type": self.search_type,
                 "filter": filter_expression,
                 "total_results": len(documents),
                 "documents": documents,

@@ -814,10 +814,6 @@ class PlanSearchOrchestratorSK:
                                 max_tokens=40000,
                             )
 
-                            # Always use kernel function (simpler approach)
-                            if stream:
-                                yield f"data: ###📝 Starting writer phase...\n\n"
-
                             # Call multi-agent plugin
                             multi_agent_function = self.kernel.get_function(
                                 "vanilla_multi_agent", "run_multi_agent"
@@ -910,8 +906,7 @@ class PlanSearchOrchestratorSK:
                                         else:
                                             yield f"data: ### ❌ Writer [{idx}/{len(sub_results)}]: {topic} (failed)\n\n"
 
-                                    yield f"data: 🔍 Starting reviewer phase...\n\n"
-
+                                    
                                     # Stream reviewer progress
                                     for idx, result in enumerate(sub_results, 1):
                                         topic = result.get("sub_topic", "Unknown")
@@ -936,12 +931,7 @@ class PlanSearchOrchestratorSK:
                                 all_ready = group_chat_data.get(
                                     "all_ready_to_publish", False
                                 )
-                                if stream:
-                                    if all_ready:
-                                        yield f"data: ###✅ All sub-topics ready to publish!\n\n"
-                                    else:
-                                        yield f"data: ###⚠️ Review completed with some concerns\n\n"
-
+                        
                                 # Stream final answers (always, regardless of ready_to_publish)
                                 final_answer_str = group_chat_data.get(
                                     "final_answer", ""
