@@ -90,6 +90,7 @@ class PlanSearchOrchestratorSK:
         # Initialize plugins
         bing_api_key = getattr(settings, "BING_API_KEY", None)
         bing_endpoint = getattr(settings, "BING_ENDPOINT", None)
+        search_type = getattr(settings, "AZURE_AI_SEARCH_SEARCH_TYPE", "hybrid")
 
         logger.info(f"Initializing SearchPlugin with:")
         logger.info(

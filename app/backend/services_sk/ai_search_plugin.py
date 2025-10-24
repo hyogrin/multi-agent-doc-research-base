@@ -304,7 +304,7 @@ class AISearchPlugin:
                 search_text=query,
                 vector_queries=vector_queries,
                 filter=filter_expression,
-                query_type=QueryType.SEMANTIC,
+                query_type=QueryType.SIMPLE,
                 semantic_configuration_name="semantic-config",
                 query_caption=QueryCaptionType.EXTRACTIVE,
                 query_answer=QueryAnswerType.EXTRACTIVE,

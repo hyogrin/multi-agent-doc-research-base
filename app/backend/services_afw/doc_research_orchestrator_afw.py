@@ -691,6 +691,7 @@ class PlanSearchOrchestratorAFW:
                         "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"
                     ),
                     openai_api_version=self.settings.AZURE_OPENAI_API_VERSION,
+                    search_type=os.getenv("AZURE_AI_SEARCH_SEARCH_TYPE", "hybrid"),  # ✅ 환경변수에서 search_type 전달
                 )
                 workflow_builder.add_edge(last_executor, ai_search_executor)
                 last_executor = ai_search_executor

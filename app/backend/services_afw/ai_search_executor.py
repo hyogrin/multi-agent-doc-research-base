@@ -53,6 +53,7 @@ class AISearchExecutor(Executor):
         openai_key: Optional[str] = None,
         embedding_deployment: Optional[str] = None,
         openai_api_version: Optional[str] = None,
+        search_type: Optional[str] = None,
     ):
         """
         Initialize the AI search executor with required clients.
@@ -66,6 +67,7 @@ class AISearchExecutor(Executor):
             openai_key: Azure OpenAI API key
             embedding_deployment: Azure OpenAI embedding deployment name
             openai_api_version: Azure OpenAI API version
+            search_type: Search type (semantic, hybrid, vector, text)
         """
         super().__init__(id=id)
 
@@ -73,6 +75,7 @@ class AISearchExecutor(Executor):
         self.search_endpoint = search_endpoint or os.getenv("AZURE_AI_SEARCH_ENDPOINT")
         self.search_key = search_key or os.getenv("AZURE_AI_SEARCH_API_KEY")
         self.index_name = index_name or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
+        self.search_type = search_type or os.getenv("AZURE_AI_SEARCH_SEARCH_TYPE", "hybrid")
 
         # OpenAI setup for embeddings
         self.openai_endpoint = openai_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -130,7 +133,9 @@ class AISearchExecutor(Executor):
             await ctx.yield_output(f"data: ### {LOCALE_MSG['searching_ai_search']}\n\n")
 
             sub_topics = search_data.get("sub_topics", [])
-            search_type = search_data.get("search_type", "hybrid")
+            # ✅ Use self.search_type as default (from env or init param)
+            search_type = search_data.get("search_type", self.search_type)
+            logger.info(f"[AISearchExecutor] Using search_type: {search_type}")
             filters = search_data.get("filters")
             top_k = search_data.get("top_k", 5)
             include_content = search_data.get("include_content", True)
@@ -326,7 +331,7 @@ class AISearchExecutor(Executor):
                 filter=filter_expression,
                 select=select_fields,
                 top=top_k,
-                query_type=QueryType.SEMANTIC,
+                query_type=QueryType.SIMPLE,
                 semantic_configuration_name="semantic-config",
             )
 
