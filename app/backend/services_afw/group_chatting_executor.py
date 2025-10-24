@@ -25,7 +25,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 from langchain.prompts import load_prompt
 from config.config import Settings
 from i18n.locale_msg import LOCALE_MESSAGES
-from utils.json_control import clean_and_validate_json
+from utils.json_control import clean_and_validate_json, clean_duplicate_table_content
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -485,6 +485,10 @@ class GroupChattingExecutor(Executor):
                 answer_markdown = parsed_answer.get(
                     "revised_answer_markdown", ""
                 ) or parsed_answer.get("draft_answer_markdown", "")
+
+                answer_markdown = clean_duplicate_table_content(answer_markdown)
+
+
 
                 # ✅ Extract citations
                 citations = parsed_answer.get("citations", [])

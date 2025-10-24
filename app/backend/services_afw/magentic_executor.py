@@ -41,7 +41,7 @@ from langchain.prompts import load_prompt
 from config.config import Settings
 from i18n.locale_msg import LOCALE_MESSAGES
 from utils.yield_message import send_step_with_code
-from utils.json_control import clean_and_validate_json
+from utils.json_control import clean_and_validate_json, clean_duplicate_table_content
 
 logger = logging.getLogger(__name__)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -631,6 +631,9 @@ class MagenticExecutor(Executor):
                                     or parsed_answer.get("answer", "")
                                 )
                                 if answer_markdown:
+                                    answer_markdown = clean_duplicate_table_content(
+                                        answer_markdown
+                                    )
                                     final_answer = answer_markdown
 
                                 if reviewer_score == "N/A":
@@ -793,3 +796,4 @@ class MagenticExecutor(Executor):
             "context_truncated": context_truncated,
             "error": error_info,
         }
+

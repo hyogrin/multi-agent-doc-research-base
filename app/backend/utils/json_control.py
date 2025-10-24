@@ -59,3 +59,28 @@ def clean_and_validate_json(content: str) -> str:
                 "final_answer": "Processing error occurred",
                 "error": str(e)
             }, ensure_ascii=False)
+
+def clean_duplicate_table_content(markdown: str) -> str:
+    """Remove text that duplicates table row content."""
+    import re
+    
+    # Find all markdown tables
+    table_pattern = r'\|[^\n]+\|[\n\r]+\|[-:\s|]+\|[\n\r]+((?:\|[^\n]+\|[\n\r]+)+)'
+    tables = re.finditer(table_pattern, markdown)
+    
+    cleaned = markdown
+    for table_match in tables:
+        table_content = table_match.group(0)
+        # Extract cell content from table
+        cell_pattern = r'\|\s*([^|]+?)\s*\|'
+        cells = re.findall(cell_pattern, table_content)
+        
+        # Remove sentences that contain exact cell content before the table
+        for cell in cells:
+            cell = cell.strip()
+            if len(cell) > 10:  # Only check substantial content
+                # Remove lines that contain this cell content before the table
+                pattern = f"[^\n]*{re.escape(cell)}[^\n]*\n"
+                cleaned = re.sub(pattern, "", cleaned, count=1)
+    
+    return cleaned

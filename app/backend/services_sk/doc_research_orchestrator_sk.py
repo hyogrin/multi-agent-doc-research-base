@@ -27,6 +27,7 @@ from .ai_search_plugin import AISearchPlugin
 from .unified_file_upload_plugin import UnifiedFileUploadPlugin
 from .group_chatting_plugin import GroupChattingPlugin
 from .vanilla_multi_agent_plugin import MultiAgentPlugin
+from utils.json_control import clean_duplicate_table_content
 
 
 logger = logging.getLogger(__name__)
@@ -855,7 +856,7 @@ class PlanSearchOrchestratorSK:
                                             final_answer_data = json.loads(final_answer_json)
                                             # Extract answer_markdown (try revised first, then draft)
                                             answer_markdown = final_answer_data.get("revised_answer_markdown", "") or final_answer_data.get("draft_answer_markdown", "")
-                                            
+                                            answer_markdown = clean_duplicate_table_content(answer_markdown)
                                             if stream and answer_markdown:
                                                 # Set TTFT
                                                 if 'ttft_time' not in locals():
