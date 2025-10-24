@@ -18,23 +18,25 @@ from azure.search.documents.models import (
 )
 from openai import AzureOpenAI
 
+from config.config import Settings
+
 
 class AISearchPlugin:
     """Plugin for searching documents in Azure AI Search with multiple search methods."""
     
-    def __init__(self):
+    def __init__(self, settings: Settings):
         """Initialize the AI search plugin with required clients."""
         # AI Search setup
-        self.search_endpoint = os.getenv("AZURE_AI_SEARCH_ENDPOINT")
-        self.search_key = os.getenv("AZURE_AI_SEARCH_API_KEY")
-        self.index_name = os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
+        self.search_endpoint = settings.AZURE_AI_SEARCH_ENDPOINT
+        self.search_key = settings.AZURE_AI_SEARCH_API_KEY
+        self.index_name = settings.AZURE_AI_SEARCH_INDEX_NAME
         
         # OpenAI setup for embeddings
-        self.openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        self.openai_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",)
-        self.openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-        
+        self.openai_endpoint = settings.AZURE_OPENAI_ENDPOINT
+        self.openai_key = settings.AZURE_OPENAI_API_KEY
+        self.embedding_deployment = settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME
+        self.openai_api_version = settings.AZURE_OPENAI_API_VERSION
+        self.search_type = settings.AZURE_AI_SEARCH_SEARCH_TYPE or "hybrid"
         # Initialize clients
         self._init_clients()
     
@@ -67,7 +69,7 @@ class AISearchPlugin:
     def search_documents(
         self,
         query: str,
-        search_type: str = "hybrid",  # "hybrid", "semantic", "vector", "text"
+        search_type: str = None,  # "hybrid", "semantic", "vector", "text"
         filters: Optional[str] = None,
         top_k: int = 5,
         include_content: bool = True,
@@ -101,7 +103,10 @@ class AISearchPlugin:
             filter_expression = self._build_filters(
                 filters, document_type, industry, company, report_year
             )
-            
+
+            if not search_type:
+                search_type = self.search_type
+
             # Configure search based on search type
             search_results = self._execute_search(
                 query, query_vector, search_type, filter_expression, top_k, include_content

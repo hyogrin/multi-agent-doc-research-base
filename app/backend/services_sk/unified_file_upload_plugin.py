@@ -1104,9 +1104,7 @@ class UnifiedFileUploadPlugin:
             
             result: AnalyzeResult = poller.result()
 
-            print(result.content_format) 
-            print(result.content[:3000]) # Print first 3000 characters of result for debugging
-
+            
             if is_debug:
                 # Save result.content to file for debugging
                 debug_dir = Path("debug_content")
@@ -1334,7 +1332,7 @@ Ready to upload files?""",
                                 "status": "error",
                                 "message": "Failed to upload to vector database"
                             })
-                        print(documents[0])
+                        
                     else:
                         results.append({
                             "file": original_filename,

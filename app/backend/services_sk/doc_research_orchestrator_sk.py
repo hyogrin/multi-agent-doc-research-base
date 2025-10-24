@@ -90,8 +90,7 @@ class PlanSearchOrchestratorSK:
         # Initialize plugins
         bing_api_key = getattr(settings, "BING_API_KEY", None)
         bing_endpoint = getattr(settings, "BING_ENDPOINT", None)
-        search_type = getattr(settings, "AZURE_AI_SEARCH_SEARCH_TYPE", "hybrid")
-
+        
         logger.info(f"Initializing SearchPlugin with:")
         logger.info(
             f"  - bing_api_key from settings: {'SET' if bing_api_key else 'NOT SET'}"
@@ -102,7 +101,7 @@ class PlanSearchOrchestratorSK:
             bing_api_key=bing_api_key, bing_endpoint=bing_endpoint
         )
         self.intent_plan_plugin = IntentPlanPlugin(settings)
-        self.ai_search_plugin = AISearchPlugin()
+        self.ai_search_plugin = AISearchPlugin(settings)
         self.unified_file_upload_plugin = UnifiedFileUploadPlugin()
         self.group_chatting_plugin = GroupChattingPlugin(settings)
         self.multi_agent_plugin = MultiAgentPlugin(settings)
@@ -632,7 +631,6 @@ class PlanSearchOrchestratorSK:
                                 self.kernel,
                                 KernelArguments(
                                     query=str(query),
-                                    search_type="semantic",
                                     top_k=3,
                                     include_content=True,
                                 ),
@@ -845,17 +843,60 @@ class PlanSearchOrchestratorSK:
                         # Parse and stream results
                         if sub_topic_group_chat_result_str:
                             try:
-                                group_chat_data = json.loads(
-                                    sub_topic_group_chat_result_str
-                                )
+                                group_chat_data = json.loads(sub_topic_group_chat_result_str)
                                 logger.info(
                                     f"Multi-agent result for {sub_topic_name}: status={group_chat_data.get('status')}"
                                 )
 
+                                # ✅ Check if this is Semantic Kernel GroupChat format (simple structure)
+                                if multi_agent_type == "Semantic Kernel GroupChat":
+                                    # SK GroupChat format: {"status": "success", "sub_topic": "...", "final_answer": "JSON string"}
+                                    if group_chat_data.get("status") == "success":
+                                        final_answer_json = group_chat_data.get("final_answer", "")
+                                        
+                                        # ✅ Parse final_answer JSON to extract markdown
+                                        try:
+                                            final_answer_data = json.loads(final_answer_json)
+                                            # Extract answer_markdown (try revised first, then draft)
+                                            answer_markdown = final_answer_data.get("revised_answer_markdown", "") or final_answer_data.get("draft_answer_markdown", "")
+                                            
+                                            if stream and answer_markdown:
+                                                # Set TTFT
+                                                if 'ttft_time' not in locals():
+                                                    ttft_time = datetime.now(tz=self.timezone) - start_time
+                                                
+                                                yield f"\n"
+                                                yield f"data: ### {LOCALE_MSG.get('write_research', 'Writing Answer')} for {sub_topic_name}\n\n"
+                                                yield f"## {sub_topic_name}\n\n"
+                                                
+                                                # Stream answer in chunks
+                                                chunk_size = 100
+                                                for i in range(0, len(answer_markdown), chunk_size):
+                                                    chunk = answer_markdown[i : i + chunk_size]
+                                                    yield chunk
+                                                    await asyncio.sleep(0.01)
+                                                yield "\n\n"
+                                            elif stream:
+                                                # No markdown found, log warning
+                                                logger.warning(f"No answer_markdown found in final_answer for {sub_topic_name}")
+                                                yield f"data: ⚠️ No answer content generated for {sub_topic_name}\n\n"
+                                                
+                                        except json.JSONDecodeError as je:
+                                            logger.error(f"Failed to parse final_answer JSON for {sub_topic_name}: {je}")
+                                            logger.error(f"Raw final_answer: {final_answer_json[:200]}...")
+                                            if stream:
+                                                yield f"data: ❌ Error parsing answer format\n\n"
+                                    else:
+                                        error_msg = group_chat_data.get("error", "Unknown error")
+                                        logger.error(f"SK GroupChat failed for {sub_topic_name}: {error_msg}")
+                                        if stream:
+                                            yield f"data: ❌ Error: {error_msg}\n\n"
+                                    
+                                    continue  # Skip vanilla multi-agent processing
+                                
+                                # ✅ Vanilla multi-agent format processing (existing code)
                                 # Get sub-topic results for detailed info
-                                sub_results = group_chat_data.get(
-                                    "sub_topic_results", []
-                                )
+                                sub_results = group_chat_data.get("sub_topic_results", [])
 
                                 # Stream writer progress
                                 if stream:
